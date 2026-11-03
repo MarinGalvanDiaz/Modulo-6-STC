@@ -1,0 +1,21 @@
+{
+  "name": "mobile-validator",
+  "version": "1.0.0",
+  "main": "index.js",
+  "dependencies": {
+    "expo": "~58.0.23",
+    "expo-camera": "~58.0.14",
+    "expo-haptics": "~58.0.7",
+    "expo-status-bar": "~58.0.4",
+    "react": "19.3.0",
+    "react-native": "0.88.1",
+    "socket.io-client": "^4.8.4"
+  },
+  "scripts": {
+    "start": "expo start",
+    "android": "expo start --android",
+    "ios": "expo start --ios",
+    "web": "expo start --web"
+  },
+  "private": true
+}

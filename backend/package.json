@@ -1,0 +1,20 @@
+{
+  "name": "stc-modulo6-backend",
+  "version": "1.0.0",
+  "description": "Módulo 6: Control de Acceso en Puertas (Validator API), Verificación ECDSA secp256r1 + HMAC-SHA256 TOTP 15s y Libro Mayor de Auditoría Hash-Chain",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "dev": "node --watch src/server.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "mysql2": "^3.22.0",
+    "pg": "^8.20.0",
+    "qrcode": "^1.5.4",
+    "socket.io": "^4.8.3",
+    "uuid": "^13.0.0"
+  }
+}

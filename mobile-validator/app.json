@@ -1,0 +1,38 @@
+{
+  "expo": {
+    "name": "STC Validator — Módulo 6",
+    "slug": "stc-modulo6-validator",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "icon": "./assets/icon.png",
+    "userInterfaceStyle": "dark",
+    "ios": {
+      "supportsTablet": true,
+      "infoPlist": {
+        "NSCameraUsageDescription": "Se requiere acceso a la cámara para escanear los códigos QR dinámicos de los boletos en las puertas del auditorio."
+      }
+    },
+    "android": {
+      "permissions": [
+        "CAMERA"
+      ],
+      "adaptiveIcon": {
+        "backgroundColor": "#070B14",
+        "foregroundImage": "./assets/android-icon-foreground.png",
+        "backgroundImage": "./assets/android-icon-background.png",
+        "monochromeImage": "./assets/android-icon-monochrome.png"
+      }
+    },
+    "web": {
+      "favicon": "./assets/favicon.png"
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Permitir que STC Validator acceda a la cámara para escanear boletos QR dinámicos."
+        }
+      ]
+    ]
+  }
+}
