@@ -116,10 +116,21 @@ async function buildDynamicQrForTicket(ticketId, mode = 'VALID') {
  * 3) Estado de ingreso único en el auditorio
  * 4) Registro en el Libro Mayor de Auditoría con Hashes Encadenados (SHA-256 Hash Chain)
  */
+// Cache de idempotencia de 1.5s para evitar dobles lecturas de ráfaga de cámara en iOS/Android
+const recentCameraBurstCache = new Map();
+
 async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId = 'SCANNER-EXPO-01' }) {
   const startHr = process.hrtime.bigint();
   const pkiInfo = db.getPkiInfo();
   const event = db.getEvent();
+
+  const rawKey = typeof qrData === 'string' ? qrData : JSON.stringify(qrData);
+  if (scannerId !== 'TEST-RUNNER') {
+    const cachedBurst = recentCameraBurstCache.get(rawKey);
+    if (cachedBurst && Date.now() - cachedBurst.timestamp < 1500) {
+      return cachedBurst.response;
+    }
+  }
 
   let parsed;
   try {
@@ -374,7 +385,7 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
     latencyMs,
   });
 
-  return {
+  const validResponse = {
     status: 'VALID',
     title: 'ACCESO VÁLIDO — ADELANTE',
     message: reason,
@@ -397,6 +408,15 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
     },
     auditBlock,
   };
+
+  if (scannerId !== 'TEST-RUNNER') {
+    recentCameraBurstCache.set(rawKey, {
+      timestamp: Date.now(),
+      response: validResponse,
+    });
+  }
+
+  return validResponse;
 }
 
 /**
@@ -460,8 +480,13 @@ function getAuditoriumStatsAndAuditSummary() {
   };
 }
 
+function clearBurstCache() {
+  recentCameraBurstCache.clear();
+}
+
 module.exports = {
   buildDynamicQrForTicket,
   validateAccessQr,
   getAuditoriumStatsAndAuditSummary,
+  clearBurstCache,
 };

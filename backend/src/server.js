@@ -12,6 +12,7 @@ const {
   buildDynamicQrForTicket,
   validateAccessQr,
   getAuditoriumStatsAndAuditSummary,
+  clearBurstCache,
 } = require('./validatorService');
 
 const PORT = parseInt(process.env.PORT || '4000', 10);
@@ -56,6 +57,11 @@ async function startServer() {
   app.use(express.static(path.join(__dirname, '..', 'public')));
 
   const lanIp = getLocalLanIp();
+
+  // 0. OpenAPI 3.0 Contract Specification
+  app.get('/api/openapi.yaml', (req, res) => {
+    res.sendFile(path.join(__dirname, '..', 'openapi.yaml'));
+  });
 
   // 1. Health & Network Info
   app.get('/api/health', (req, res) => {
@@ -152,6 +158,7 @@ async function startServer() {
       if (!updated) {
         return res.status(404).json({ error: 'Boleto no encontrado' });
       }
+      clearBurstCache();
       const stats = getAuditoriumStatsAndAuditSummary();
       io.emit('stats:updated', stats);
       res.json({ ok: true, ticket: updated });
@@ -163,6 +170,7 @@ async function startServer() {
   app.post('/api/tickets/reset-all', async (req, res) => {
     try {
       await db.resetAllTickets();
+      clearBurstCache();
       const stats = getAuditoriumStatsAndAuditSummary();
       io.emit('stats:updated', stats);
       res.json({ ok: true, message: 'Todos los boletos han sido restaurados al estado ISSUED' });

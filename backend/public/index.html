@@ -3,21 +3,21 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Módulo 6 — Control de Acceso en Puertas & Auditoría Criptográfica</title>
+  <title>ticketmaster • Control de Acceso y Auditoría (Módulo 6)</title>
   <script src="/socket.io/socket.io.js"></script>
   <style>
     :root {
-      --bg: #070b14;
-      --card: #111827;
-      --card-alt: #1e293b;
-      --border: #334155;
-      --text: #f8fafc;
-      --muted: #94a3b8;
-      --emerald: #10b981;
-      --amber: #f59e0b;
-      --rose: #f43f5e;
-      --sky: #38bdf8;
-      --indigo: #6366f1;
+      --tm-blue: #026cdf;
+      --tm-blue-dark: #0153ad;
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --valid: #00a859;
+      --replay: #ea580c;
+      --fake: #e11d48;
+      --used: #026cdf;
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body {
@@ -28,464 +28,460 @@
       padding-bottom: 48px;
     }
     header {
-      background: linear-gradient(90deg, #0f172a 0%, #1e1b4b 100%);
-      border-bottom: 1px solid var(--border);
-      padding: 16px 24px;
+      background: var(--tm-blue);
+      color: #ffffff;
+      padding: 16px 32px;
       display: flex;
-      flex-wrap: wrap;
       align-items: center;
       justify-content: space-between;
-      gap: 16px;
-    }
-    .brand h1 {
-      font-size: 1.25rem;
-      font-weight: 800;
-      letter-spacing: -0.02em;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .brand p {
-      font-size: 0.82rem;
-      color: var(--muted);
-      margin-top: 2px;
-    }
-    .badges {
-      display: flex;
       flex-wrap: wrap;
+      gap: 12px;
+      box-shadow: 0 2px 10px rgba(2, 108, 223, 0.2);
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .brand-logo {
+      font-size: 1.5rem;
+      font-weight: 900;
+      font-style: italic;
+      letter-spacing: -0.03em;
+    }
+    .brand-sub {
+      font-size: 0.85rem;
+      opacity: 0.9;
+      font-weight: 500;
+    }
+    .header-pills {
+      display: flex;
       gap: 10px;
       align-items: center;
     }
-    .pill {
-      background: rgba(255,255,255,0.06);
-      border: 1px solid var(--border);
+    .header-pill {
+      background: rgba(255, 255, 255, 0.16);
+      padding: 6px 14px;
       border-radius: 999px;
-      padding: 6px 12px;
-      font-size: 0.76rem;
+      font-size: 0.78rem;
       font-weight: 600;
-      display: flex;
-      align-items: center;
-      gap: 6px;
     }
-    .pill.ok { border-color: rgba(16,185,129,0.5); color: #6ee7b7; background: rgba(16,185,129,0.12); }
-    .pill.sky { border-color: rgba(56,189,248,0.5); color: #7dd3fc; background: rgba(56,189,248,0.12); }
 
     .container {
-      max-width: 1440px;
-      margin: 22px auto;
-      padding: 0 20px;
+      max-width: 1260px;
+      margin: 28px auto;
+      padding: 0 24px;
       display: grid;
-      grid-template-columns: 440px 1fr;
-      gap: 22px;
+      grid-template-columns: 390px 1fr;
+      gap: 28px;
+      align-items: start;
     }
-    @media (max-width: 1080px) {
+    @media (max-width: 980px) {
       .container { grid-template-columns: 1fr; }
     }
-    .card {
+
+    /* Ticketmaster SafeTix Pass Card */
+    .tm-pass {
       background: var(--card);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
       border: 1px solid var(--border);
-      border-radius: 14px;
-      padding: 20px;
-      box-shadow: 0 12px 30px rgba(0,0,0,0.35);
     }
-    .card-title {
-      font-size: 1rem;
+    .tm-pass-top {
+      background: var(--tm-blue);
+      color: #fff;
+      padding: 18px 22px 14px;
+    }
+    .tm-pass-eyebrow {
+      font-size: 0.68rem;
       font-weight: 700;
-      margin-bottom: 4px;
+      letter-spacing: 0.08em;
+      opacity: 0.85;
+      text-transform: uppercase;
+    }
+    .tm-pass-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin-top: 2px;
+    }
+    .tm-pass-venue {
+      font-size: 0.8rem;
+      opacity: 0.9;
+      margin-top: 2px;
+    }
+    .tm-seat-bar {
+      background: var(--tm-blue-dark);
+      color: #fff;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      padding: 12px 16px;
+      text-align: center;
+    }
+    .tm-seat-bar .lbl {
+      font-size: 0.65rem;
+      font-weight: 700;
+      opacity: 0.75;
+      letter-spacing: 0.06em;
+    }
+    .tm-seat-bar .val {
+      font-size: 1.2rem;
+      font-weight: 900;
+      margin-top: 2px;
+    }
+    .tm-qr-body {
+      padding: 24px;
+      text-align: center;
+    }
+    .tm-qr-body img {
+      width: 240px;
+      height: 240px;
+      display: block;
+      margin: 0 auto;
+    }
+    .safetix-bar {
+      margin: 16px 0 8px;
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .safetix-fill {
+      height: 100%;
+      background: var(--tm-blue);
+      transition: width 0.35s linear;
+    }
+    .safetix-meta {
       display: flex;
       justify-content: space-between;
-      align-items: center;
-    }
-    .card-sub {
-      font-size: 0.8rem;
+      font-size: 0.76rem;
       color: var(--muted);
-      margin-bottom: 16px;
+      font-weight: 600;
+    }
+    .safetix-meta strong { color: var(--tm-blue); }
+
+    .controls-box {
+      padding: 0 22px 22px;
     }
     label {
       display: block;
-      font-size: 0.76rem;
+      font-size: 0.7rem;
+      font-weight: 700;
       text-transform: uppercase;
       letter-spacing: 0.05em;
       color: var(--muted);
       margin-bottom: 6px;
-      font-weight: 700;
     }
-    select, input {
+    select {
       width: 100%;
-      background: #090d16;
-      color: var(--text);
-      border: 1px solid var(--border);
-      border-radius: 8px;
       padding: 10px 12px;
-      font-size: 0.9rem;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: var(--text);
+      font-size: 0.86rem;
+      font-weight: 600;
       margin-bottom: 14px;
     }
-    .mode-grid {
+    .mode-pills {
       display: grid;
-      grid-template-columns: 1fr 1fr;
-      gap: 8px;
-      margin-bottom: 16px;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 14px;
     }
-    .mode-btn {
-      background: var(--card-alt);
-      color: var(--text);
-      border: 1px solid var(--border);
+    .mode-pill {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
       border-radius: 8px;
-      padding: 9px 10px;
-      font-size: 0.78rem;
-      font-weight: 600;
+      padding: 8px 4px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      color: #334155;
       cursor: pointer;
-      text-align: left;
       transition: all 0.15s;
     }
-    .mode-btn:hover { border-color: var(--sky); }
-    .mode-btn.active-VALID { background: rgba(16,185,129,0.2); border-color: var(--emerald); color: #6ee7b7; }
-    .mode-btn.active-REPLAY { background: rgba(245,158,11,0.2); border-color: var(--amber); color: #fcd34d; }
-    .mode-btn.active-FAKE_SIGNATURE, .mode-btn.active-FAKE_HMAC { background: rgba(244,63,94,0.2); border-color: var(--rose); color: #fda4af; }
-
-    .qr-box {
-      background: #ffffff;
-      border-radius: 16px;
-      padding: 16px;
-      text-align: center;
-      margin: 12px 0;
-      position: relative;
-      box-shadow: 0 0 28px rgba(56, 189, 248, 0.2);
+    .mode-pill.active {
+      background: var(--tm-blue);
+      color: #fff;
+      border-color: var(--tm-blue);
     }
-    .qr-box img {
-      width: 280px;
-      height: 280px;
-      display: block;
-      margin: 0 auto;
-    }
-    .qr-status-tag {
-      display: inline-block;
-      margin-top: 8px;
-      padding: 4px 10px;
-      border-radius: 6px;
-      font-size: 0.75rem;
-      font-weight: 800;
-      color: #0f172a;
-      background: #e2e8f0;
-    }
-    .totp-bar-wrap {
-      margin: 12px 0;
-    }
-    .totp-header {
-      display: flex;
-      justify-content: space-between;
-      font-size: 0.8rem;
-      margin-bottom: 6px;
-      font-weight: 600;
-    }
-    .totp-progress {
-      height: 8px;
-      background: #1e293b;
-      border-radius: 999px;
-      overflow: hidden;
-    }
-    .totp-fill {
-      height: 100%;
-      background: linear-gradient(90deg, var(--emerald), var(--sky));
-      transition: width 0.35s linear;
-    }
-    .crypto-meta {
-      background: #090d16;
-      border: 1px solid var(--border);
-      border-radius: 8px;
-      padding: 10px 12px;
-      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-      font-size: 0.72rem;
-      color: #cbd5e1;
-      margin-bottom: 14px;
-      word-break: break-all;
-    }
-    .crypto-meta div { margin-bottom: 4px; }
-    .crypto-meta span { color: var(--sky); font-weight: 700; }
-
     .btn-row {
       display: flex;
       gap: 8px;
-      flex-wrap: wrap;
     }
     .btn {
       flex: 1;
-      background: var(--indigo);
-      color: #fff;
-      border: none;
-      border-radius: 8px;
-      padding: 10px 14px;
-      font-size: 0.84rem;
+      padding: 11px 14px;
+      border-radius: 10px;
+      font-size: 0.82rem;
       font-weight: 700;
       cursor: pointer;
-      transition: opacity 0.15s;
+      border: none;
     }
-    .btn:hover { opacity: 0.92; }
-    .btn.secondary {
-      background: var(--card-alt);
-      border: 1px solid var(--border);
+    .btn-primary {
+      background: var(--tm-blue);
+      color: #fff;
     }
-    .btn.emerald { background: var(--emerald); color: #052e16; }
+    .btn-outline {
+      background: #fff;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+    }
 
-    /* Right column */
-    .live-banner {
-      border-radius: 12px;
-      padding: 16px 20px;
-      margin-bottom: 18px;
-      border: 2px solid var(--border);
-      background: #0f172a;
+    /* Right Dashboard */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+    .status-banner {
+      border-radius: 16px;
+      padding: 18px 22px;
+      margin-bottom: 20px;
+      color: #fff;
+      background: var(--tm-blue);
       display: flex;
       align-items: center;
       justify-content: space-between;
       gap: 16px;
-      transition: all 0.25s;
+      transition: background 0.2s;
     }
-    .live-banner.VALID { background: rgba(16,185,129,0.14); border-color: var(--emerald); }
-    .live-banner.REPLAY { background: rgba(245,158,11,0.14); border-color: var(--amber); }
-    .live-banner.FAKE { background: rgba(244,63,94,0.14); border-color: var(--rose); }
-    .live-banner.ALREADY_USED { background: rgba(56,189,248,0.14); border-color: var(--sky); }
+    .status-banner.VALID { background: var(--valid); }
+    .status-banner.REPLAY { background: var(--replay); }
+    .status-banner.FAKE { background: var(--fake); }
+    .status-banner.ALREADY_USED { background: var(--used); }
 
-    .kpi-grid {
+    .kpi-row {
       display: grid;
       grid-template-columns: repeat(5, 1fr);
       gap: 12px;
-      margin-bottom: 18px;
+      margin-bottom: 20px;
     }
-    @media (max-width: 900px) {
-      .kpi-grid { grid-template-columns: repeat(2, 1fr); }
+    @media (max-width: 780px) {
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
     }
-    .kpi {
-      background: #0b1120;
+    .kpi-tile {
+      background: var(--card);
       border: 1px solid var(--border);
-      border-radius: 10px;
-      padding: 12px 14px;
+      border-radius: 14px;
+      padding: 14px 16px;
     }
-    .kpi .num {
-      font-size: 1.55rem;
-      font-weight: 800;
-      margin-top: 2px;
-    }
-    .kpi .lbl {
-      font-size: 0.72rem;
+    .kpi-tile .lbl {
+      font-size: 0.7rem;
+      font-weight: 700;
       text-transform: uppercase;
       color: var(--muted);
-      font-weight: 700;
+    }
+    .kpi-tile .num {
+      font-size: 1.6rem;
+      font-weight: 900;
+      margin-top: 2px;
     }
 
-    .sections-grid {
+    .sec-grid {
       display: grid;
       grid-template-columns: repeat(4, 1fr);
       gap: 12px;
-      margin-bottom: 18px;
+      margin-top: 14px;
     }
-    @media (max-width: 900px) {
-      .sections-grid { grid-template-columns: repeat(2, 1fr); }
-    }
-    .sec-card {
-      background: #0b1120;
+    .sec-box {
+      background: #f8fafc;
       border: 1px solid var(--border);
-      border-radius: 10px;
+      border-radius: 12px;
       padding: 12px;
     }
     .sec-bar {
       height: 6px;
-      background: #1e293b;
+      background: #e2e8f0;
       border-radius: 99px;
       margin-top: 8px;
       overflow: hidden;
     }
     .sec-fill {
       height: 100%;
-      background: var(--sky);
+      background: var(--tm-blue);
     }
 
     table {
       width: 100%;
       border-collapse: collapse;
-      font-size: 0.8rem;
+      font-size: 0.82rem;
+      margin-top: 12px;
     }
     th, td {
       text-align: left;
-      padding: 10px 8px;
-      border-bottom: 1px solid rgba(255,255,255,0.06);
+      padding: 11px 10px;
+      border-bottom: 1px solid #f1f5f9;
     }
     th {
-      color: var(--muted);
-      font-size: 0.72rem;
+      font-size: 0.7rem;
       text-transform: uppercase;
+      color: var(--muted);
       letter-spacing: 0.04em;
     }
-    .badge-res {
+    .tag {
       display: inline-block;
-      padding: 3px 8px;
-      border-radius: 6px;
+      padding: 3px 9px;
+      border-radius: 99px;
       font-size: 0.7rem;
       font-weight: 800;
+      color: #fff;
     }
-    .badge-res.VALID { background: rgba(16,185,129,0.2); color: #6ee7b7; border: 1px solid var(--emerald); }
-    .badge-res.REPLAY { background: rgba(245,158,11,0.2); color: #fcd34d; border: 1px solid var(--amber); }
-    .badge-res.FAKE { background: rgba(244,63,94,0.2); color: #fda4af; border: 1px solid var(--rose); }
-    .badge-res.ALREADY_USED { background: rgba(56,189,248,0.2); color: #7dd3fc; border: 1px solid var(--sky); }
-    .hash-mono {
+    .tag.VALID { background: var(--valid); }
+    .tag.REPLAY { background: var(--replay); }
+    .tag.FAKE { background: var(--fake); }
+    .tag.ALREADY_USED { background: var(--used); }
+    .mono {
       font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-      font-size: 0.72rem;
-      color: #94a3b8;
+      font-size: 0.74rem;
+      color: var(--muted);
     }
   </style>
 </head>
 <body>
   <header>
     <div class="brand">
-      <h1>🛡️ Módulo 6: Control de Acceso en Puertas & Libro Mayor de Auditoría</h1>
-      <p>Verificación ECDSA (secp256r1) + Ventana TOTP 15s HMAC-SHA256 + Cadena de Hashes SHA-256</p>
+      <span class="brand-logo">ticketmaster</span>
+      <span class="brand-sub">SafeTix™ Validator & Libro Mayor de Auditoría (Módulo 6)</span>
     </div>
-    <div class="badges">
-      <div class="pill sky" id="lanIpPill">📱 API Celular (LAN): Cargando...</div>
-      <div class="pill ok" id="pkiPill">🔑 PKI: ECDSA secp256r1</div>
-      <div class="pill ok" id="chainPill">⛓️ Hash-Chain: ÍNTEGRA</div>
+    <div class="header-pills">
+      <div class="header-pill" id="lanIpPill">IP Celular: Cargando...</div>
+      <div class="header-pill" id="chainPill">Hash-Chain: Íntegra</div>
     </div>
   </header>
 
   <div class="container">
-    <!-- COLUMNA IZQUIERDA: WALLET / GENERADOR DE QR DINÁMICO PARA ESCANEAR CON EL CELULAR -->
-    <div class="card">
-      <div class="card-title">
-        <span>📲 Simulador Wallet QR Dinámico (Módulo 5 ➔ 6)</span>
-      </div>
-      <div class="card-sub">
-        Apunta la cámara de tu celular (App Expo) a este QR o prueba los modos de ataque criptográfico.
-      </div>
-
-      <label for="ticketSelect">1. Seleccionar Boleto Emitido (Firmado con ECDSA secp256r1)</label>
-      <select id="ticketSelect"></select>
-
-      <label>2. Modo de Prueba Criptográfica del QR</label>
-      <div class="mode-grid">
-        <button class="mode-btn active-VALID" data-mode="VALID" onclick="setMode('VALID')">
-          ✅ QR Válido (En Vivo 15s)<br><small style="color:var(--muted)">ECDSA + HMAC actual</small>
-        </button>
-        <button class="mode-btn" data-mode="REPLAY" onclick="setMode('REPLAY')">
-          ⏱️ Ataque Replay<br><small style="color:var(--muted)">QR expirado (-120s)</small>
-        </button>
-        <button class="mode-btn" data-mode="FAKE_SIGNATURE" onclick="setMode('FAKE_SIGNATURE')">
-          🚨 Falso (Firma ECDSA)<br><small style="color:var(--muted)">Asiento adulterado</small>
-        </button>
-        <button class="mode-btn" data-mode="FAKE_HMAC" onclick="setMode('FAKE_HMAC')">
-          🔓 Falso (HMAC Inválido)<br><small style="color:var(--muted)">Sin llave SK_session</small>
-        </button>
+    <!-- IZQUIERDA: BOLETO DIGITAL SAFETIX™ PARA ESCANEAR CON EL IPHONE -->
+    <div class="tm-pass">
+      <div class="tm-pass-top">
+        <div class="tm-pass-eyebrow">BOLETO SAFETIX™ • ECDSA P-256</div>
+        <div class="tm-pass-title">Concierto Sinfónico STC 2026</div>
+        <div class="tm-pass-venue">Gran Auditorio Nacional</div>
       </div>
 
-      <div class="qr-box">
-        <img id="qrImage" src="" alt="QR Dinámico" />
-        <div class="qr-status-tag" id="qrStatusTag">CARGANDO QR CRIPTOGRÁFICO...</div>
-      </div>
-
-      <div class="totp-bar-wrap">
-        <div class="totp-header">
-          <span id="totpStepLabel">Ventana TOTP #--</span>
-          <span id="totpCountdownLabel">Rota en --s</span>
+      <div class="tm-seat-bar">
+        <div>
+          <div class="lbl">SECCIÓN</div>
+          <div class="val" id="passSec">VIP</div>
         </div>
-        <div class="totp-progress">
-          <div class="totp-fill" id="totpFill" style="width: 100%;"></div>
+        <div>
+          <div class="lbl">FILA</div>
+          <div class="val" id="passRow">A</div>
+        </div>
+        <div>
+          <div class="lbl">ASIENTO</div>
+          <div class="val" id="passSeat">01</div>
         </div>
       </div>
 
-      <div class="crypto-meta" id="cryptoMetaBox">
-        <div><span>Curva PKI:</span> secp256r1 (NIST P-256)</div>
-        <div><span>Firma ECDSA:</span> <em id="metaSig">--</em></div>
-        <div><span>HMAC-SHA256 (15s):</span> <em id="metaHmac">--</em></div>
+      <div class="tm-qr-body">
+        <img id="qrImage" src="" alt="QR SafeTix" />
+        <div class="safetix-bar">
+          <div class="safetix-fill" id="totpFill" style="width: 100%;"></div>
+        </div>
+        <div class="safetix-meta">
+          <span>Escanea con tu iPhone • Rota cada 15s</span>
+          <strong id="totpCountdownLabel">15s</strong>
+        </div>
       </div>
 
-      <div class="btn-row" style="margin-bottom: 10px;">
-        <button class="btn emerald" onclick="simulateScanFromWeb()">
-          ⚡ Probar Escaneo en Torniquete Ahora
-        </button>
-      </div>
-      <div class="btn-row">
-        <button class="btn secondary" onclick="resetSelectedTicket()">
-          🔄 Restaurar Boleto Actual (ISSUED)
-        </button>
-        <button class="btn secondary" onclick="resetAllTickets()">
-          🧹 Restaurar Todos
-        </button>
+      <div class="controls-box">
+        <label for="ticketSelect">Boleto Activo</label>
+        <select id="ticketSelect"></select>
+
+        <label>Escenario de Prueba</label>
+        <div class="mode-pills">
+          <button class="mode-pill active" data-mode="VALID" onclick="setMode('VALID')">Válido</button>
+          <button class="mode-pill" data-mode="REPLAY" onclick="setMode('REPLAY')">Replay</button>
+          <button class="mode-pill" data-mode="FAKE_SIGNATURE" onclick="setMode('FAKE_SIGNATURE')">Firma Falsa</button>
+          <button class="mode-pill" data-mode="FAKE_HMAC" onclick="setMode('FAKE_HMAC')">Sin Llave</button>
+        </div>
+
+        <div class="btn-row" style="margin-bottom: 8px;">
+          <button class="btn btn-primary" onclick="simulateScanFromWeb()">Validar Ahora</button>
+          <button class="btn btn-outline" onclick="resetSelectedTicket()">Restaurar Boleto</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-outline" onclick="resetAllTickets()">Restaurar Todos los Boletos</button>
+        </div>
       </div>
     </div>
 
-    <!-- COLUMNA DERECHA: AUDITORÍA EN TIEMPO REAL, AFORO Y HASH-CHAIN -->
+    <!-- DERECHA: PANEL DE AFORO Y AUDITORÍA EN TIEMPO REAL -->
     <div>
-      <div class="live-banner" id="lastScanBanner">
+      <div class="status-banner" id="lastScanBanner">
         <div>
-          <div style="font-size:0.75rem; text-transform:uppercase; color:var(--muted); font-weight:700;">
-            Última Respuesta del Validador en Puerta
+          <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.85; font-weight: 700;">
+            Última Lectura en Torniquete
           </div>
-          <div style="font-size:1.25rem; font-weight:800; margin-top:2px;" id="bannerTitle">
-            ESPERANDO ESCANEO EN TORNIQUETE...
+          <div style="font-size: 1.3rem; font-weight: 900; margin-top: 2px;" id="bannerTitle">
+            Listo para Escanear
           </div>
-          <div style="font-size:0.84rem; color:#cbd5e1; margin-top:4px;" id="bannerMsg">
-            Escanea el QR con la app Expo desde tu celular o presiona "Probar Escaneo en Torniquete Ahora".
+          <div style="font-size: 0.85rem; opacity: 0.92; margin-top: 2px;" id="bannerMsg">
+            Apunta la cámara de tu iPhone al código QR de la izquierda.
           </div>
         </div>
-        <div style="text-align:right; min-width:130px;">
-          <div style="font-size:1.5rem; font-weight:900; color:var(--sky);" id="bannerLatency">-- ms</div>
-          <div style="font-size:0.72rem; color:var(--muted);">Tiempo Sub-Segundo</div>
+        <div style="text-align: right; min-width: 95px;">
+          <div style="font-size: 1.45rem; font-weight: 900;" id="bannerLatency">-- ms</div>
+          <div style="font-size: 0.72rem; opacity: 0.85;">Sub-segundo</div>
         </div>
       </div>
 
-      <!-- KPIs de Seguridad y Aforo -->
-      <div class="kpi-grid">
-        <div class="kpi">
+      <div class="kpi-row">
+        <div class="kpi-tile">
           <div class="lbl">Aforo Dentro</div>
-          <div class="num" id="kpiInside" style="color:var(--sky);">0 / 120</div>
+          <div class="num" id="kpiInside" style="color: var(--tm-blue);">0 / 120</div>
         </div>
-        <div class="kpi">
-          <div class="lbl">Accesos Válidos</div>
-          <div class="num" id="kpiValid" style="color:var(--emerald);">0</div>
+        <div class="kpi-tile">
+          <div class="lbl">Válidos</div>
+          <div class="num" id="kpiValid" style="color: var(--valid);">0</div>
         </div>
-        <div class="kpi">
-          <div class="lbl">Replay Bloqueados</div>
-          <div class="num" id="kpiReplay" style="color:var(--amber);">0</div>
+        <div class="kpi-tile">
+          <div class="lbl">Replay</div>
+          <div class="num" id="kpiReplay" style="color: var(--replay);">0</div>
         </div>
-        <div class="kpi">
-          <div class="lbl">Falsos Rechazados</div>
-          <div class="num" id="kpiFake" style="color:var(--rose);">0</div>
+        <div class="kpi-tile">
+          <div class="lbl">Falsos</div>
+          <div class="num" id="kpiFake" style="color: var(--fake);">0</div>
         </div>
-        <div class="kpi">
-          <div class="lbl">Ya Ingresó (Passback)</div>
-          <div class="num" id="kpiUsed" style="color:#a5b4fc;">0</div>
+        <div class="kpi-tile">
+          <div class="lbl">Ya Usados</div>
+          <div class="num" id="kpiUsed" style="color: var(--used);">0</div>
         </div>
       </div>
 
-      <!-- Aforo por Sección del Auditorio -->
-      <div class="card" style="margin-bottom: 18px;">
-        <div class="card-title">
-          <span>🏛️ Estadísticas de Aforo del Auditorio en Tiempo Real</span>
-          <span style="font-size:0.8rem; color:var(--sky);" id="eventTitleLabel">--</span>
-        </div>
-        <div class="sections-grid" id="sectionsGrid" style="margin-top:12px; margin-bottom:0;"></div>
-      </div>
-
-      <!-- Libro Mayor de Auditoría (Hash-Chain) -->
       <div class="card">
-        <div class="card-title">
-          <span>⛓️ Libro Mayor de Auditoría Inmutable (SHA-256 Hash-Chain)</span>
-          <button class="btn secondary" style="flex:0; padding:6px 12px; font-size:0.75rem;" onclick="verifyChainNow()">
-            🔍 Verificar Integridad SHA-256
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size: 0.95rem;">Ocupación del Auditorio por Sección</strong>
+          <span style="font-size: 0.82rem; color: var(--tm-blue); font-weight: 700;" id="occupancyPctLabel">0%</span>
+        </div>
+        <div class="sec-grid" id="sectionsGrid"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong style="font-size: 0.95rem;">Libro Mayor de Auditoría (SHA-256 Hash-Chain)</strong>
+            <div style="font-size: 0.78rem; color: var(--muted);">Cada registro está encadenado al hash SHA-256 anterior</div>
+          </div>
+          <button class="btn btn-outline" style="flex:0; padding: 7px 14px;" onclick="verifyChainNow()">
+            Verificar Cadena
           </button>
         </div>
-        <div class="card-sub" id="chainSummaryText">
-          Cada escaneo se encadena criptográficamente al hash SHA-256 del bloque anterior.
-        </div>
-        <div style="overflow-x:auto;">
+
+        <div style="overflow-x: auto;">
           <table>
             <thead>
               <tr>
-                <th>Bloque</th>
-                <th>Resultado</th>
-                <th>Boleto / Asiento</th>
+                <th>#</th>
+                <th>Estado</th>
+                <th>Boleto</th>
                 <th>Puerta</th>
-                <th>Checks Cripto</th>
-                <th>Latencia</th>
-                <th>Prev Hash ➔ Block Hash (SHA-256)</th>
+                <th>Tiempo</th>
+                <th>Hash SHA-256</th>
               </tr>
             </thead>
             <tbody id="ledgerTableBody"></tbody>
@@ -516,9 +512,7 @@
     async function init() {
       const healthRes = await fetch('/api/health').then(r => r.json());
       document.getElementById('lanIpPill').textContent =
-        `📱 API Celular (Wi-Fi): ${healthRes.network.recommendedMobileApiUrl}`;
-      document.getElementById('pkiPill').textContent =
-        `🔑 PKI ${healthRes.pki.curve} (${healthRes.database.activeEngine.toUpperCase()})`;
+        `IP iPhone: ${healthRes.network.recommendedMobileApiUrl}`;
 
       await loadTickets(true);
       const dash = await fetch('/api/audit/dashboard').then(r => r.json());
@@ -537,8 +531,8 @@
       tickets.forEach(t => {
         const opt = document.createElement('option');
         opt.value = t.ticketId;
-        const statusIcon = t.status === 'USED' ? '🔵 [YA INGRESÓ]' : '🟢 [DISPONIBLE]';
-        opt.textContent = `${statusIcon} ${t.ticketId} — ${t.section} ${t.row}-${t.seat} (${t.buyerName})`;
+        const tag = t.status === 'USED' ? '[Usado]' : '[Disponible]';
+        opt.textContent = `${tag} ${t.ticketId} — ${t.section} ${t.row}-${t.seat} (${t.buyerName})`;
         select.appendChild(opt);
       });
 
@@ -560,11 +554,8 @@
 
     async function setMode(mode) {
       currentMode = mode;
-      document.querySelectorAll('.mode-btn').forEach(btn => {
-        btn.className = 'mode-btn';
-        if (btn.dataset.mode === mode) {
-          btn.classList.add(`active-${mode}`);
-        }
+      document.querySelectorAll('.mode-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
       });
       await refreshQr();
     }
@@ -578,10 +569,9 @@
       currentQrStep = res.totp.currentStep;
 
       document.getElementById('qrImage').src = res.qrDataUrl;
-      document.getElementById('qrStatusTag').textContent =
-        `${res.ticket.ticketId} • ${res.ticket.section} ${res.ticket.row}-${res.ticket.seat} • Modo: ${res.simulationMode}`;
-      document.getElementById('metaSig').textContent = res.cryptoDetails.ecdsaSignaturePreview;
-      document.getElementById('metaHmac').textContent = res.cryptoDetails.hmacSha256;
+      document.getElementById('passSec').textContent = res.ticket.section;
+      document.getElementById('passRow').textContent = res.ticket.row;
+      document.getElementById('passSeat').textContent = res.ticket.seat;
     }
 
     async function tickTotpTimer() {
@@ -592,8 +582,7 @@
       const secLeft = windowSec - secInto;
       const pct = (secLeft / windowSec) * 100;
 
-      document.getElementById('totpStepLabel').textContent = `Ventana TOTP #${step}`;
-      document.getElementById('totpCountdownLabel').textContent = `Rota en ${secLeft}s`;
+      document.getElementById('totpCountdownLabel').textContent = `${secLeft}s`;
       document.getElementById('totpFill').style.width = `${pct}%`;
 
       if (currentQrStep !== null && step !== currentQrStep) {
@@ -609,7 +598,7 @@
         body: JSON.stringify({
           qrData: lastQrEnvelopeString,
           gateId: 'PUERTA-NORTE-01',
-          scannerId: 'WEB-SIMULATOR-PANEL',
+          scannerId: 'WEB-PANEL',
         }),
       }).then(r => r.json());
 
@@ -631,14 +620,14 @@
       const res = await fetch('/api/audit/verify-chain').then(r => r.json());
       alert(
         res.intact
-          ? `✅ CADENA DE AUDITORÍA ÍNTEGRA\nBloques verificados: ${res.totalBlocks}\nÚltimo Hash SHA-256:\n${res.latestHash}`
-          : `🚨 ALERTA DE CORRUPCIÓN EN CADENA:\n${res.reason}`
+          ? `Libro Mayor Íntegro\nBloques verificados: ${res.totalBlocks}\nÚltimo Hash SHA-256:\n${res.latestHash}`
+          : `Alerta de alteración:\n${res.reason}`
       );
     }
 
     function renderLastScanBanner(scan) {
       const banner = document.getElementById('lastScanBanner');
-      banner.className = `live-banner ${scan.status}`;
+      banner.className = `status-banner ${scan.status}`;
       document.getElementById('bannerTitle').textContent = scan.title;
       document.getElementById('bannerMsg').textContent = scan.message;
       document.getElementById('bannerLatency').textContent = `${scan.latencyMs} ms`;
@@ -646,9 +635,8 @@
 
     function renderDashboard(dash) {
       if (!dash || !dash.occupancy) return;
-      document.getElementById('eventTitleLabel').textContent =
-        `${dash.event.name} (${dash.occupancy.capacityOccupancyPercent}% Ocupación)`;
-
+      document.getElementById('occupancyPctLabel').textContent =
+        `${dash.occupancy.capacityOccupancyPercent}% Ocupación`;
       document.getElementById('kpiInside').textContent =
         `${dash.occupancy.checkedInCount} / ${dash.occupancy.totalCapacity}`;
       document.getElementById('kpiValid').textContent = dash.securityCounters.validEntries;
@@ -656,25 +644,16 @@
       document.getElementById('kpiFake').textContent = dash.securityCounters.fakeRejected;
       document.getElementById('kpiUsed').textContent = dash.securityCounters.alreadyUsedBlocked;
 
-      const chainPill = document.getElementById('chainPill');
-      if (dash.chainIntegrity.intact) {
-        chainPill.className = 'pill ok';
-        chainPill.textContent = `⛓️ Hash-Chain: ÍNTEGRA (${dash.chainIntegrity.totalBlocks} bloques)`;
-      } else {
-        chainPill.className = 'pill';
-        chainPill.style.borderColor = '#f43f5e';
-        chainPill.textContent = '🚨 Hash-Chain: ALTERADA';
-      }
+      document.getElementById('chainPill').textContent = dash.chainIntegrity.intact
+        ? `Hash-Chain: Íntegra (${dash.chainIntegrity.totalBlocks})`
+        : 'Hash-Chain: Alterada';
 
       const secGrid = document.getElementById('sectionsGrid');
       secGrid.innerHTML = dash.occupancy.sections.map(s => `
-        <div class="sec-card">
-          <div style="display:flex; justify-content:space-between; font-weight:700; font-size:0.85rem;">
+        <div class="sec-box">
+          <div style="display:flex; justify-content:space-between; font-weight:700; font-size:0.84rem;">
             <span>${s.section}</span>
-            <span style="color:var(--sky);">${s.inside} / ${s.capacity}</span>
-          </div>
-          <div style="font-size:0.74rem; color:var(--muted); margin-top:2px;">
-            Emitidos: ${s.issued} • Ocupación: ${s.occupancyPercent}%
+            <span style="color:var(--tm-blue);">${s.inside}/${s.capacity}</span>
           </div>
           <div class="sec-bar">
             <div class="sec-fill" style="width:${Math.min(100, s.occupancyPercent)}%;"></div>
@@ -683,22 +662,14 @@
       `).join('');
 
       const tbody = document.getElementById('ledgerTableBody');
-      tbody.innerHTML = (dash.recentLedger || []).map(b => `
+      tbody.innerHTML = (dash.recentLedger || []).slice(0, 12).map(b => `
         <tr>
-          <td><strong>#${b.blockIndex}</strong><br><span style="font-size:0.68rem; color:var(--muted);">${new Date(b.timestampIso).toLocaleTimeString()}</span></td>
-          <td><span class="badge-res ${b.validationResult}">${b.validationResult}</span></td>
-          <td><strong>${b.ticketId}</strong><br><span style="font-size:0.72rem; color:var(--muted);">${b.section} (${b.seatLabel})</span></td>
-          <td>${b.gateId}<br><span style="font-size:0.68rem; color:var(--muted);">${b.scannerId}</span></td>
-          <td style="font-size:0.72rem;">
-            ECDSA: ${b.ecdsaValid ? '✅' : '❌'}<br>
-            HMAC: ${b.hmacValid ? '✅' : '❌'}
-          </td>
+          <td><strong>#${b.blockIndex}</strong></td>
+          <td><span class="tag ${b.validationResult}">${b.validationResult}</span></td>
+          <td><strong>${b.ticketId}</strong> <span style="color:var(--muted);">(${b.section} ${b.seatLabel})</span></td>
+          <td>${b.gateId}</td>
           <td><strong>${b.latencyMs} ms</strong></td>
-          <td class="hash-mono">
-            <div>Prev: ${b.prevHash.slice(0, 16)}...</div>
-            <div style="color:#38bdf8;">Curr: ${b.blockHash.slice(0, 16)}...</div>
-            <div style="font-size:0.68rem; color:#cbd5e1; margin-top:2px;">${b.reason}</div>
-          </td>
+          <td class="mono">${b.blockHash.slice(0, 20)}...</td>
         </tr>
       `).join('');
     }
@@ -707,4 +678,3 @@
   </script>
 </body>
 </html>
-
