@@ -7,6 +7,7 @@ const cors = require('cors');
 const { Server } = require('socket.io');
 
 const db = require('./db');
+const authService = require('./authService');
 const { signScannerJwt, verifyAuditHashChain, TOTP_WINDOW_SECONDS } = require('./cryptoEngine');
 const {
   buildDynamicQrForTicket,
@@ -42,6 +43,7 @@ function getLocalLanIp() {
 
 async function startServer() {
   await db.init();
+  authService.init();
 
   const app = express();
   const server = http.createServer(app);
@@ -89,7 +91,7 @@ async function startServer() {
     });
   });
 
-  // 2. PKI Public Key & Scanner Credential Issuance (Módulo 1 -> Módulo 6)
+  // 2. PKI Public Key & Scanner Authentication (Módulo 1 -> Módulo 6)
   app.get('/api/pki/public-key', (req, res) => {
     const pki = db.getPkiInfo();
     res.json({
@@ -98,6 +100,68 @@ async function startServer() {
       publicKeyPem: pki.publicKeyPem,
       certificateFingerprint: pki.certificateFingerprint,
     });
+  });
+
+  // Inicio de sesión seguro para operadores de escáner (PBKDF2-HMAC-SHA512 + PIN 2FA + JWT ES256 secp256r1 + Bloqueo de Sesión Única)
+  app.post('/api/auth/login', (req, res) => {
+    const { username, password, pin, gateId, scannerId, forceRelease } = req.body || {};
+
+    // Si forceRelease=true, notificamos por WebSocket al dispositivo anterior antes de revocar su JTI
+    const prevCheck = authService.isOperatorAlreadyLoggedIn(username, scannerId);
+    const authResult = authService.authenticateOperator({
+      username,
+      password,
+      pin,
+      gateId,
+      scannerId,
+      forceRelease: Boolean(forceRelease),
+    });
+
+    if (!authResult.ok) {
+      return res.status(authResult.status || 401).json({
+        ok: false,
+        code: authResult.code || 'AUTH_FAILED',
+        activeSession: authResult.activeSession || null,
+        error: authResult.error,
+      });
+    }
+
+    if (forceRelease && prevCheck.loggedIn && prevCheck.session?.jti) {
+      io.emit('auth:session_revoked', {
+        revokedJti: prevCheck.session.jti,
+        operatorId: prevCheck.session.operatorId,
+        newScannerId: scannerId,
+      });
+    }
+
+    res.json(authResult);
+  });
+
+  // Consulta si un usuario/operador ya tiene sesión activa en otro dispositivo
+  app.get('/api/auth/session-status/:username', (req, res) => {
+    const status = authService.isOperatorAlreadyLoggedIn(
+      req.params.username,
+      req.query.scannerId
+    );
+    res.json({
+      ok: true,
+      loggedIn: status.loggedIn,
+      sameDevice: status.sameDevice || false,
+      activeSession: status.session,
+    });
+  });
+
+  app.get('/api/auth/me', (req, res) => {
+    const verification = authService.verifySessionToken(req.headers.authorization);
+    if (!verification.valid) {
+      return res.status(401).json({ ok: false, error: verification.reason });
+    }
+    res.json({ ok: true, session: verification.payload });
+  });
+
+  app.post('/api/auth/logout', (req, res) => {
+    authService.revokeSessionToken(req.headers.authorization);
+    res.json({ ok: true, message: 'Sesión revocada criptográficamente' });
   });
 
   app.post('/api/pki/scanner-session', (req, res) => {
@@ -199,7 +263,27 @@ async function startServer() {
         return res.status(400).json({ error: 'Se requiere qrData para validar el acceso' });
       }
 
-      const result = await validateAccessQr({ qrData, gateId, scannerId });
+      // Si el escáner envía su JWT ES256, verificamos criptográficamente la firma ECDSA secp256r1
+      let verifiedScannerId = scannerId;
+      let verifiedGateId = gateId;
+      if (req.headers.authorization) {
+        const tokenCheck = authService.verifySessionToken(req.headers.authorization);
+        if (!tokenCheck.valid) {
+          return res.status(401).json({
+            status: 'FAKE',
+            title: 'SESIÓN DE ESCÁNER NO AUTORIZADA',
+            message: tokenCheck.reason,
+          });
+        }
+        verifiedGateId = gateId || tokenCheck.payload.gateId;
+        verifiedScannerId = `${tokenCheck.payload.operatorId}@${scannerId || tokenCheck.payload.scannerId}`;
+      }
+
+      const result = await validateAccessQr({
+        qrData,
+        gateId: verifiedGateId,
+        scannerId: verifiedScannerId,
+      });
       const stats = getAuditoriumStatsAndAuditSummary();
 
       // Emitir eventos en tiempo real a todos los paneles de auditoría y apps móviles

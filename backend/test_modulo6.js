@@ -11,7 +11,51 @@ const BASE_URL = 'http://localhost:4000';
 async function runTests() {
   console.log('=== INICIANDO PRUEBAS CRIPTOGRÁFICAS DEL MÓDULO 6 ===\n');
 
-  // 0. Resetear boletos a ISSUED para prueba limpia
+  // 0. Autenticar Operador de Escáner (PBKDF2-HMAC-SHA512 + PIN 2FA + JWT ES256 secp256r1)
+  const loginRes = await fetch(`${BASE_URL}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: 'operador@ticketmaster.mx',
+      password: 'Ticketmaster#2026',
+      pin: '2026',
+      gateId: 'PUERTA-NORTE-01',
+      scannerId: 'TEST-RUNNER',
+    }),
+  }).then((r) => r.json());
+  if (!loginRes.ok || !loginRes.security?.jwtToken) {
+    throw new Error('Fallo en inicio de sesión del operador');
+  }
+  console.log(
+    `[0] Login Operador Dispositivo A -> ${loginRes.operator.name} | KDF: ${loginRes.security.passwordKdf}`
+  );
+
+  // 0.b Intentar iniciar sesión con el mismo usuario desde un Dispositivo B (debe rechazarse con HTTP 409)
+  const secondDeviceRes = await fetch(`${BASE_URL}/api/auth/login`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      username: 'operador@ticketmaster.mx',
+      password: 'Ticketmaster#2026',
+      pin: '2026',
+      gateId: 'ACCESO-SUR-03',
+      scannerId: 'SECOND-DEVICE-ANDROID',
+    }),
+  });
+  const secondDeviceJson = await secondDeviceRes.json();
+  console.log(
+    `[0.b] Bloqueo Multi-Dispositivo  -> Status HTTP ${secondDeviceRes.status} (${secondDeviceJson.code}) | Rechazado correctamente`
+  );
+  if (secondDeviceRes.status !== 409) {
+    throw new Error('Se esperaba HTTP 409 al intentar loggearse en un segundo dispositivo');
+  }
+
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    Authorization: `Bearer ${loginRes.security.jwtToken}`,
+  };
+
+  // Resetear boletos a ISSUED para prueba limpia
   await fetch(`${BASE_URL}/api/tickets/reset-all`, { method: 'POST' });
 
   // 1. Probar caso FALSO (Firma ECDSA inválida por alteración de asiento)
@@ -91,8 +135,12 @@ async function runTests() {
   );
   if (!chainReport.intact) throw new Error('Fallo en integridad de la cadena de hashes');
 
-  // Restaurar TKT-2026-0001 para que esté listo como DISPONIBLE en la demo del usuario
+  // Restaurar TKT-2026-0001 y cerrar sesión del TEST-RUNNER para dejar libre al usuario en su iPhone
   await fetch(`${BASE_URL}/api/tickets/TKT-2026-0001/reset`, { method: 'POST' });
+  await fetch(`${BASE_URL}/api/auth/logout`, {
+    method: 'POST',
+    headers: authHeaders,
+  });
 
   console.log('\n✅ TODAS LAS PRUEBAS DEL MÓDULO 6 PASARON EXITOSAMENTE EN SUB-SEGUNDO.');
 }

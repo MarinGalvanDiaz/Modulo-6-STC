@@ -124,16 +124,53 @@ function verifyDynamicQrHmac(sessionSecret, ticketId, totpStep, providedHmacHex)
   }
 }
 
+const PBKDF2_ITERATIONS = 210000;
+const PBKDF2_KEYLEN = 64;
+const PBKDF2_DIGEST = 'sha512';
+
+/**
+ * Deriva un hash seguro de contraseña usando PBKDF2-HMAC-SHA512 (210,000 iteraciones)
+ * con salt criptográfico único de 128 bits (Módulo 1 & 6).
+ */
+function hashPasswordPbkdf2(password, saltHex = crypto.randomBytes(16).toString('hex')) {
+  const derivedKey = crypto
+    .pbkdf2Sync(String(password), Buffer.from(saltHex, 'hex'), PBKDF2_ITERATIONS, PBKDF2_KEYLEN, PBKDF2_DIGEST)
+    .toString('hex');
+  return {
+    algorithm: `PBKDF2-HMAC-SHA512:${PBKDF2_ITERATIONS}`,
+    saltHex,
+    hashHex: derivedKey,
+  };
+}
+
+/**
+ * Verifica una contraseña en tiempo constante (timingSafeEqual) contra su hash PBKDF2-HMAC-SHA512.
+ */
+function verifyPasswordPbkdf2(password, saltHex, expectedHashHex) {
+  try {
+    if (!password || !saltHex || !expectedHashHex) return false;
+    const { hashHex } = hashPasswordPbkdf2(password, saltHex);
+    const actualBuf = Buffer.from(hashHex, 'hex');
+    const expectedBuf = Buffer.from(expectedHashHex, 'hex');
+    if (actualBuf.length !== expectedBuf.length) return false;
+    return crypto.timingSafeEqual(actualBuf, expectedBuf);
+  } catch (err) {
+    return false;
+  }
+}
+
 /**
  * Genera un token JWT firmado con ECDSA (ES256 / secp256r1) para autenticar
  * los escáneres/torniquetes de las puertas (Módulo 1 & 6).
  */
 function signScannerJwt(scannerPayload, privateKeyPem) {
   const header = { alg: 'ES256', typ: 'JWT', crv: 'secp256r1' };
+  const nowSec = Math.floor(Date.now() / 1000);
   const body = {
     ...scannerPayload,
-    iat: Math.floor(Date.now() / 1000),
-    exp: Math.floor(Date.now() / 1000) + 86400,
+    jti: crypto.randomBytes(12).toString('hex'),
+    iat: nowSec,
+    exp: nowSec + 28800, // Sesión de turno de 8 horas
   };
   const encodedHeader = Buffer.from(JSON.stringify(header)).toString('base64url');
   const encodedBody = Buffer.from(JSON.stringify(body)).toString('base64url');
@@ -145,6 +182,43 @@ function signScannerJwt(scannerPayload, privateKeyPem) {
   // IEEE P1363 format is standard for JWS ES256
   const signature = sign.sign({ key: privateKeyPem, dsaEncoding: 'ieee-p1363' }).toString('base64url');
   return `${signingInput}.${signature}`;
+}
+
+/**
+ * Verifica criptográficamente un token JWT ES256 (ECDSA secp256r1) emitido para un escáner.
+ */
+function verifyScannerJwt(token, publicKeyPem) {
+  try {
+    if (!token || typeof token !== 'string') return { valid: false, reason: 'Token ausente' };
+    const parts = token.split('.');
+    if (parts.length !== 3) return { valid: false, reason: 'Estructura JWT inválida' };
+
+    const [encodedHeader, encodedBody, encodedSig] = parts;
+    const signingInput = `${encodedHeader}.${encodedBody}`;
+
+    const verify = crypto.createVerify('SHA256');
+    verify.update(signingInput);
+    verify.end();
+
+    const sigBuf = Buffer.from(encodedSig, 'base64url');
+    const isSigValid = verify.verify(
+      { key: publicKeyPem, dsaEncoding: 'ieee-p1363' },
+      sigBuf
+    );
+    if (!isSigValid) {
+      return { valid: false, reason: 'Firma ECDSA secp256r1 del token JWT inválida' };
+    }
+
+    const payload = JSON.parse(Buffer.from(encodedBody, 'base64url').toString('utf8'));
+    const nowSec = Math.floor(Date.now() / 1000);
+    if (payload.exp && nowSec > payload.exp) {
+      return { valid: false, reason: 'El token JWT del operador ha expirado' };
+    }
+
+    return { valid: true, payload };
+  } catch (err) {
+    return { valid: false, reason: 'Token JWT corrupto o malformado' };
+  }
 }
 
 /**
@@ -237,6 +311,7 @@ function hashBuyerIdentity(identityString) {
 module.exports = {
   TOTP_WINDOW_SECONDS,
   GENESIS_HASH,
+  PBKDF2_ITERATIONS,
   generatePkiKeyPair,
   canonicalizeTicketPayload,
   signTicketPayload,
@@ -244,7 +319,10 @@ module.exports = {
   getTotpStep,
   computeDynamicQrHmac,
   verifyDynamicQrHmac,
+  hashPasswordPbkdf2,
+  verifyPasswordPbkdf2,
   signScannerJwt,
+  verifyScannerJwt,
   computeAuditBlockHash,
   verifyAuditHashChain,
   hashBuyerIdentity,

@@ -80,8 +80,25 @@ export default function App() {
 
   const [connected, setConnected] = useState(false);
   const [selectedGate, setSelectedGate] = useState(GATES[0].id);
-  const [scannerId] = useState(`IPHONE-${Platform.OS.toUpperCase()}`);
+  const [scannerId] = useState(
+    () =>
+      `IPHONE-${Platform.OS.toUpperCase()}-${Math.random()
+        .toString(36)
+        .slice(2, 6)
+        .toUpperCase()}`
+  );
   const [scannerJwt, setScannerJwt] = useState(null);
+
+  // Estado de Autenticación Segura del Operador (PBKDF2-SHA512 + PIN 2FA + JWT ES256)
+  const [operatorSession, setOperatorSession] = useState(null);
+  const [loginUser, setLoginUser] = useState('operador@ticketmaster.mx');
+  const [loginPass, setLoginPass] = useState('Ticketmaster#2026');
+  const [loginPin, setLoginPin] = useState('2026');
+  const [showPassword, setShowPassword] = useState(false);
+  const [authLoading, setAuthLoading] = useState(false);
+  const [authError, setAuthError] = useState(null);
+  const [authConflictSession, setAuthConflictSession] = useState(null);
+  const activeJtiRef = useRef(null);
 
   // Camera & Scanner state
   const [permission, requestPermission] = useCameraPermissions();
@@ -120,18 +137,6 @@ export default function App() {
         await healthRes.json();
         setConnected(true);
 
-        const sessionRes = await fetch(`${cleanUrl}/api/pki/scanner-session`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            gateId: selectedGate,
-            scannerId,
-            operator: 'Staff Ticketmaster',
-          }),
-        });
-        const sessionJson = await sessionRes.json();
-        setScannerJwt(sessionJson.jwtToken);
-
         const [ticketsRes, dashRes] = await Promise.all([
           fetch(`${cleanUrl}/api/tickets`).then((r) => r.json()),
           fetch(`${cleanUrl}/api/audit/dashboard`).then((r) => r.json()),
@@ -156,6 +161,16 @@ export default function App() {
             .then((r) => r.json())
             .then((d) => setTickets(d.tickets || []))
             .catch(() => {});
+        });
+        socket.on('auth:session_revoked', (evt) => {
+          if (evt?.revokedJti && activeJtiRef.current === evt.revokedJti) {
+            activeJtiRef.current = null;
+            setScannerJwt(null);
+            setOperatorSession(null);
+            setAuthError(
+              `Tu sesión fue cerrada porque se liberó desde otro dispositivo (${evt.newScannerId}).`
+            );
+          }
         });
         socketRef.current = socket;
       } catch (err) {
@@ -336,10 +351,225 @@ export default function App() {
     }
   };
 
+  // Inicio de sesión criptográfico para el operador del escáner
+  const handleOperatorLogin = async (forceRelease = false) => {
+    if (!loginUser.trim() || !loginPass || !loginPin.trim()) {
+      setAuthError('Ingresa tu correo/ID, contraseña y PIN 2FA de 4 dígitos.');
+      return;
+    }
+    setAuthLoading(true);
+    setAuthError(null);
+    setAuthConflictSession(null);
+    try {
+      const cleanUrl = serverUrl.trim().replace(/\/+$/, '');
+      const res = await fetch(`${cleanUrl}/api/auth/login`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          username: loginUser.trim(),
+          password: loginPass,
+          pin: loginPin.trim(),
+          gateId: selectedGate,
+          scannerId,
+          forceRelease: Boolean(forceRelease),
+        }),
+      });
+      const data = await res.json();
+      if (!res.ok || !data.ok) {
+        setAuthError(data.error || 'Error de autenticación');
+        if (res.status === 409 && data.code === 'ALREADY_LOGGED_IN_OTHER_DEVICE') {
+          setAuthConflictSession(data.activeSession || true);
+        }
+        await triggerHaptic('FAKE');
+        return;
+      }
+      activeJtiRef.current = data.security.jti;
+      setScannerJwt(data.security.jwtToken);
+      setOperatorSession(data);
+      setAuthConflictSession(null);
+      setLastScanResult(null);
+      setLocked(false);
+      await triggerHaptic('VALID');
+    } catch (err) {
+      setAuthError(`Sin conexión al servidor (${serverUrl}).`);
+    } finally {
+      setAuthLoading(false);
+    }
+  };
+
+  const handleOperatorLogout = async () => {
+    try {
+      const cleanUrl = serverUrl.trim().replace(/\/+$/, '');
+      if (scannerJwt) {
+        await fetch(`${cleanUrl}/api/auth/logout`, {
+          method: 'POST',
+          headers: { Authorization: `Bearer ${scannerJwt}` },
+        });
+      }
+    } catch (e) {}
+    activeJtiRef.current = null;
+    setScannerJwt(null);
+    setOperatorSession(null);
+    setAuthConflictSession(null);
+    setLastScanResult(null);
+    setLocked(false);
+  };
+
+  // ============================================================================
+  // PANTALLA DE LOGIN SEGURO DEL ESCÁNER (PBKDF2-SHA512 + PIN 2FA + JWT ES256)
+  // ============================================================================
+  const renderScannerLogin = () => {
+    return (
+      <ScrollView
+        style={styles.screenScroll}
+        contentContainerStyle={styles.screenContainer}
+        showsVerticalScrollIndicator={false}
+        keyboardShouldPersistTaps="handled"
+      >
+        <View style={styles.loginCard}>
+          <View style={styles.loginBadgeRow}>
+            <View style={styles.securityChip}>
+              <Text style={styles.securityChipText}>PBKDF2-SHA512 • 210k iter</Text>
+            </View>
+            <View style={styles.securityChip}>
+              <Text style={styles.securityChipText}>JWT ES256 (secp256r1)</Text>
+            </View>
+          </View>
+
+          <Text style={styles.loginTitle}>Acceso de Personal</Text>
+          <Text style={styles.loginSubtitle}>
+            Autentícate con tu credencial de operador y PIN 2FA para activar el lector de boletos.
+          </Text>
+
+          {authError && (
+            <View style={styles.authErrorBox}>
+              <Text style={styles.authErrorText}>{authError}</Text>
+              {authConflictSession && (
+                <TouchableOpacity
+                  style={styles.forceReleaseBtn}
+                  onPress={() => handleOperatorLogin(true)}
+                  disabled={authLoading}
+                >
+                  <Text style={styles.forceReleaseBtnText}>
+                    Cerrar sesión remota e ingresar aquí
+                  </Text>
+                </TouchableOpacity>
+              )}
+            </View>
+          )}
+
+          <Text style={styles.fieldLabel}>ID DE OPERADOR O CORREO</Text>
+          <TextInput
+            style={styles.loginInput}
+            value={loginUser}
+            onChangeText={setLoginUser}
+            autoCapitalize="none"
+            autoCorrect={false}
+            keyboardType="email-address"
+            placeholder="operador@ticketmaster.mx"
+            placeholderTextColor="#94A3B8"
+          />
+
+          <View style={styles.rowBetween}>
+            <Text style={styles.fieldLabel}>CONTRASEÑA</Text>
+            <TouchableOpacity onPress={() => setShowPassword(!showPassword)}>
+              <Text style={styles.togglePassText}>
+                {showPassword ? 'Ocultar' : 'Mostrar'}
+              </Text>
+            </TouchableOpacity>
+          </View>
+          <TextInput
+            style={styles.loginInput}
+            value={loginPass}
+            onChangeText={setLoginPass}
+            secureTextEntry={!showPassword}
+            autoCapitalize="none"
+            autoCorrect={false}
+            placeholder="••••••••••••"
+            placeholderTextColor="#94A3B8"
+          />
+
+          <Text style={styles.fieldLabel}>PIN DE SEGURIDAD 2FA (4 DÍGITOS)</Text>
+          <TextInput
+            style={styles.loginInput}
+            value={loginPin}
+            onChangeText={setLoginPin}
+            secureTextEntry={!showPassword}
+            keyboardType="number-pad"
+            maxLength={6}
+            placeholder="2026"
+            placeholderTextColor="#94A3B8"
+          />
+
+          <Text style={styles.fieldLabel}>PUERTA DE ACCESO ASIGNADA</Text>
+          <ScrollView
+            horizontal
+            showsHorizontalScrollIndicator={false}
+            contentContainerStyle={{ paddingVertical: 6 }}
+          >
+            {GATES.map((g) => {
+              const active = selectedGate === g.id;
+              return (
+                <TouchableOpacity
+                  key={g.id}
+                  style={[styles.gatePill, active && styles.gatePillActive]}
+                  onPress={() => setSelectedGate(g.id)}
+                >
+                  <Text style={[styles.gatePillText, active && styles.gatePillTextActive]}>
+                    {g.label}
+                  </Text>
+                </TouchableOpacity>
+              );
+            })}
+          </ScrollView>
+
+          <TouchableOpacity
+            style={[styles.tmButton, { marginTop: 16 }]}
+            onPress={() => handleOperatorLogin(false)}
+            disabled={authLoading}
+          >
+            {authLoading ? (
+              <ActivityIndicator color="#FFFFFF" />
+            ) : (
+              <Text style={styles.tmButtonText}>Iniciar Sesión en Torniquete</Text>
+            )}
+          </TouchableOpacity>
+
+          <View style={styles.demoCredentialsBox}>
+            <View style={styles.rowBetween}>
+              <Text style={styles.demoCredTitle}>Credenciales de Operador</Text>
+              <TouchableOpacity
+                onPress={() => {
+                  setLoginUser('operador@ticketmaster.mx');
+                  setLoginPass('Ticketmaster#2026');
+                  setLoginPin('2026');
+                  setAuthError(null);
+                }}
+              >
+                <Text style={styles.resetLink}>Autocompletar</Text>
+              </TouchableOpacity>
+            </View>
+            <Text style={styles.demoCredText}>
+              Usuario: <Text style={styles.demoCredBold}>operador@ticketmaster.mx</Text> (o STAFF-01)
+            </Text>
+            <Text style={styles.demoCredText}>
+              Clave: <Text style={styles.demoCredBold}>Ticketmaster#2026</Text> • PIN 2FA:{' '}
+              <Text style={styles.demoCredBold}>2026</Text>
+            </Text>
+          </View>
+        </View>
+      </ScrollView>
+    );
+  };
+
   // ============================================================================
   // PANTALLA 1: ESCÁNER DE ACCESO (ESTILO TICKETMASTER MINIMALISTA)
   // ============================================================================
   const renderScannerTab = () => {
+    if (!operatorSession) {
+      return renderScannerLogin();
+    }
+
     const statusCfg = lastScanResult
       ? STATUS_CONFIG[lastScanResult.status] || STATUS_CONFIG.FAKE
       : null;
@@ -350,6 +580,21 @@ export default function App() {
         contentContainerStyle={styles.screenContainer}
         showsVerticalScrollIndicator={false}
       >
+        {/* Barra minimalista del Operador Autenticado */}
+        <View style={styles.operatorBar}>
+          <View style={{ flex: 1 }}>
+            <Text style={styles.operatorName}>
+              {operatorSession.operator.name} ({operatorSession.operator.operatorId})
+            </Text>
+            <Text style={styles.operatorSub}>
+              Sesión JWT ES256 (secp256r1) • {operatorSession.security.authComputeMs}ms PBKDF2
+            </Text>
+          </View>
+          <TouchableOpacity style={styles.logoutPill} onPress={handleOperatorLogout}>
+            <Text style={styles.logoutPillText}>Salir</Text>
+          </TouchableOpacity>
+        </View>
+
         {/* Selector minimalista de Puerta */}
         <ScrollView
           horizontal
@@ -1553,5 +1798,151 @@ const styles = StyleSheet.create({
     color: '#0F172A',
     fontSize: 14,
     marginBottom: 16,
+  },
+  // Login & Operator Session Styles
+  loginCard: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 18,
+    padding: 20,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    shadowColor: '#0F172A',
+    shadowOpacity: 0.06,
+    shadowRadius: 12,
+    shadowOffset: { width: 0, height: 4 },
+    elevation: 2,
+  },
+  loginBadgeRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 6,
+    marginBottom: 12,
+  },
+  securityChip: {
+    backgroundColor: '#EFF6FF',
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+    borderRadius: 99,
+  },
+  securityChipText: {
+    color: '#026CDF',
+    fontSize: 11,
+    fontWeight: '700',
+  },
+  loginTitle: {
+    color: '#0F172A',
+    fontSize: 20,
+    fontWeight: '900',
+  },
+  loginSubtitle: {
+    color: '#64748B',
+    fontSize: 13,
+    lineHeight: 18,
+    marginTop: 4,
+    marginBottom: 16,
+  },
+  authErrorBox: {
+    backgroundColor: '#FFF1F2',
+    borderWidth: 1,
+    borderColor: '#FECDD3',
+    borderRadius: 10,
+    padding: 12,
+    marginBottom: 14,
+  },
+  authErrorText: {
+    color: '#E11D48',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  forceReleaseBtn: {
+    marginTop: 8,
+    backgroundColor: '#E11D48',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  forceReleaseBtnText: {
+    color: '#FFFFFF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  fieldLabel: {
+    color: '#64748B',
+    fontSize: 11,
+    fontWeight: '700',
+    letterSpacing: 0.5,
+    marginBottom: 6,
+    marginTop: 6,
+  },
+  togglePassText: {
+    color: '#026CDF',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  loginInput: {
+    backgroundColor: '#F8FAFC',
+    borderWidth: 1,
+    borderColor: '#CBD5E1',
+    borderRadius: 10,
+    paddingHorizontal: 14,
+    paddingVertical: 11,
+    color: '#0F172A',
+    fontSize: 14,
+    marginBottom: 8,
+  },
+  demoCredentialsBox: {
+    marginTop: 18,
+    paddingTop: 14,
+    borderTopWidth: 1,
+    borderTopColor: '#F1F5F9',
+  },
+  demoCredTitle: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  demoCredText: {
+    color: '#64748B',
+    fontSize: 12,
+    marginTop: 3,
+  },
+  demoCredBold: {
+    color: '#0F172A',
+    fontWeight: '700',
+  },
+  operatorBar: {
+    backgroundColor: '#FFFFFF',
+    borderRadius: 12,
+    paddingHorizontal: 14,
+    paddingVertical: 10,
+    marginBottom: 12,
+    borderWidth: 1,
+    borderColor: '#E2E8F0',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  operatorName: {
+    color: '#0F172A',
+    fontSize: 13,
+    fontWeight: '800',
+  },
+  operatorSub: {
+    color: '#00A859',
+    fontSize: 11,
+    fontWeight: '600',
+    marginTop: 1,
+  },
+  logoutPill: {
+    backgroundColor: '#F1F5F9',
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+    borderRadius: 99,
+  },
+  logoutPillText: {
+    color: '#475569',
+    fontSize: 12,
+    fontWeight: '700',
   },
 });
