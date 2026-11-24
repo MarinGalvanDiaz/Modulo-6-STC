@@ -1,0 +1,707 @@
+openapi: 3.0.3
+info:
+  title: STC — Módulo 6: Control de Acceso en Puertas y Registro de Auditoría API
+  version: 1.0.0
+  description: |
+    Especificación OpenAPI 3.0 para el **Módulo 6 (Validator App & Audit Ledger)** del Sistema de Boletaje Criptográfico (STC).
+    
+    ### Componentes Criptográficos Validados
+    1. **Firma Digital ECDSA (`secp256r1` / `prime256v1`)**: Verificación instantánea del `TicketPayload` usando la llave pública de la PKI (`PK_event`).
+    2. **QR Dinámico TOTP 15s (`HMAC-SHA256`)**: Recálculo en tiempo constante (`timingSafeEqual`) de `HMAC-SHA256(SK_session, TicketID || Timestamp_TOTP)` para prevenir ataques de repetición (*Replay Attacks* / capturas de pantalla).
+    3. **Control Anti-Passback**: Verificación atómica de ingreso único (`ISSUED` ➔ `USED`).
+    4. **Libro Mayor de Auditoría Inmutable (`SHA-256 Hash-Chain`)**: Cada lectura genera un bloque eslabonado con el hash `SHA-256` del bloque anterior desde el bloque Génesis (`0000...0000`).
+
+servers:
+  - url: http://localhost:4000
+    description: Servidor local de desarrollo (PC)
+  - url: http://10.100.86.55:4000
+    description: Servidor en red local Wi-Fi (para iPhone / Expo Go)
+
+tags:
+  - name: Access Validation (Módulo 6)
+    description: Validación en sub-segundo de códigos QR dinámicos en puertas y torniquetes.
+  - name: Audit Ledger & Occupancy (Módulo 6)
+    description: Libro mayor de auditoría inmutable (SHA-256 Hash-Chain) y estadísticas de aforo en tiempo real.
+  - name: PKI & Scanner Auth (Módulo 1 ➔ 6)
+    description: Consulta de llave pública ECDSA secp256r1 y credenciales JWT ES256 para escáneres.
+  - name: Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+    description: Emisión de boletos firmados y simulador de QR dinámico para pruebas.
+
+paths:
+  /api/access/validate:
+    post:
+      tags:
+        - Access Validation (Módulo 6)
+      summary: Validar un código QR dinámico escaneado en puerta/torniquete
+      description: |
+        Recibe el contenido del código QR escaneado (`qrData` como string JSON o como objeto `QrEnvelope`), verifica en sub-segundo la firma ECDSA (`secp256r1`), la ventana de 15 segundos del `HMAC-SHA256`, el estado de uso del boleto, y anexa un bloque inmutable en el Libro Mayor de Auditoría (`SHA-256 Hash-Chain`).
+      security:
+        - ScannerBearerAuth: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AccessValidationRequest'
+            examples:
+              QrComoStringJson:
+                summary: Payload enviado por el lector de cámara QR
+                value:
+                  qrData: '{"v":1,"p":{"ticketId":"TKT-2026-0001","eventId":"EVT-AUD-2026-SYMPHONY","section":"VIP","row":"A","seat":"01","buyerHash":"6dc63dd818621f0d2ba1b5b1ea1d12d9bb9615579bb34b5f1f74f8d022b31d35","issuedAt":"2026-11-03T20:02:57.854Z"},"sig":"MEUCIFQi9ipsSB1F-dCOjH_PoPeQ9sWuvPyd7xgEuTZYyQAkAiEA5m8lwDQS2YGBNZMPC3DMHSqOykjsT6-aB5Gxt-BhsAc","ts":119616943,"hmac":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}'
+                  gateId: PUERTA-NORTE-01
+                  scannerId: IPHONE-IOS
+              QrComoObjeto:
+                summary: Payload enviado como objeto JSON estructurado
+                value:
+                  qrData:
+                    v: 1
+                    p:
+                      ticketId: TKT-2026-0001
+                      eventId: EVT-AUD-2026-SYMPHONY
+                      section: VIP
+                      row: A
+                      seat: "01"
+                      buyerHash: 6dc63dd818621f0d2ba1b5b1ea1d12d9bb9615579bb34b5f1f74f8d022b31d35
+                      issuedAt: "2026-11-03T20:02:57.854Z"
+                    sig: MEUCIFQi9ipsSB1F-dCOjH_PoPeQ9sWuvPyd7xgEuTZYyQAkAiEA5m8lwDQS2YGBNZMPC3DMHSqOykjsT6-aB5Gxt-BhsAc
+                    ts: 119616943
+                    hmac: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+                  gateId: TORNIQUETE-VIP-02
+                  scannerId: IPHONE-IOS
+      responses:
+        '200':
+          description: Resultado de la validación criptográfica en sub-segundo (`VALID`, `REPLAY`, `FAKE`, o `ALREADY_USED`).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AccessValidationResponse'
+              examples:
+                ValidResponse:
+                  summary: 1. Boleto Válido (VALID)
+                  value:
+                    status: VALID
+                    title: ACCESO VÁLIDO — ADELANTE
+                    message: Acceso autorizado en PUERTA-NORTE-01. Firma ECDSA (secp256r1) y ventana HMAC-SHA256 (#119616943) verificadas con éxito.
+                    latencyMs: 0.92
+                    cryptoChecks:
+                      ecdsaVerified: true
+                      hmacVerified: true
+                      totpWindowValid: true
+                      curve: secp256r1
+                    ticket:
+                      ticketId: TKT-2026-0001
+                      buyerName: Ana Sofía Mendoza
+                      section: VIP
+                      row: A
+                      seat: "01"
+                      usedAt: "2026-11-09T19:56:00.000Z"
+                      usedGate: PUERTA-NORTE-01
+                      buyerHash: 6dc63dd818621f0d2ba1b5b1ea1d12d9bb9615579bb34b5f1f74f8d022b31d35
+                    auditBlock:
+                      blockIndex: 26
+                      timestampIso: "2026-11-09T19:56:00.001Z"
+                      gateId: PUERTA-NORTE-01
+                      scannerId: IPHONE-IOS
+                      ticketId: TKT-2026-0001
+                      eventId: EVT-AUD-2026-SYMPHONY
+                      section: VIP
+                      seatLabel: A-01
+                      validationResult: VALID
+                      reason: Acceso autorizado en PUERTA-NORTE-01. Firma ECDSA (secp256r1) y ventana HMAC-SHA256 (#119616943) verificadas con éxito.
+                      ecdsaValid: true
+                      hmacValid: true
+                      totpStep: 119616943
+                      latencyMs: 0.92
+                      prevHash: cf31ecd6cd09d56796788e66cf31ecd6cd09d56796788e66cf31ecd6cd09d567
+                      blockHash: 8a9af34c2a411a36451d2de1a60c95da8b3bee17d227c542f665f6ee7637b7e9
+                ReplayResponse:
+                  summary: 2. Ataque Replay (REPLAY — QR Expirado)
+                  value:
+                    status: REPLAY
+                    title: ATAQUE REPLAY DETECTADO (QR EXPIRADO)
+                    message: "Ataque Replay detectado: El token TOTP (#119616935) expiró hace ~120s (ventana máxima: 15s). Captura de pantalla o QR pregrabado rechazado."
+                    latencyMs: 0.45
+                    cryptoChecks:
+                      ecdsaVerified: true
+                      hmacVerified: true
+                      totpWindowValid: false
+                      curve: secp256r1
+                      stepDrift: 8
+                FakeResponse:
+                  summary: 3. Boleto Falso (FAKE — Firma ECDSA o HMAC inválido)
+                  value:
+                    status: FAKE
+                    title: BOLETO FALSO (FIRMA ECDSA INVÁLIDA)
+                    message: "Fallo en verificación de firma ECDSA (secp256r1) con PK_event: el payload fue adulterado o firmado por una entidad apócrifa."
+                    latencyMs: 0.88
+                    cryptoChecks:
+                      ecdsaVerified: false
+                      hmacVerified: false
+                      totpWindowValid: false
+                      curve: secp256r1
+                AlreadyUsedResponse:
+                  summary: 4. Boleto Ya Utilizado (ALREADY_USED — Anti-Passback)
+                  value:
+                    status: ALREADY_USED
+                    title: YA INGRESÓ (BOLETO UTILIZADO)
+                    message: "Doble ingreso rechazado (Anti-Passback): Este boleto ya registró entrada en PUERTA-NORTE-01 a las 1:56:00 p.m.."
+                    latencyMs: 0.34
+                    cryptoChecks:
+                      ecdsaVerified: true
+                      hmacVerified: true
+                      totpWindowValid: true
+                      curve: secp256r1
+        '400':
+          description: Petición inválida (`qrData` faltante).
+
+  /api/audit/dashboard:
+    get:
+      tags:
+        - Audit Ledger & Occupancy (Módulo 6)
+      summary: Obtener estadísticas de aforo en tiempo real y libro mayor de auditoría
+      responses:
+        '200':
+          description: Resumen de aforo por sección, contadores de seguridad, estado de la cadena SHA-256 y últimos bloques de auditoría.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AuditDashboardResponse'
+
+  /api/audit/verify-chain:
+    get:
+      tags:
+        - Audit Ledger & Occupancy (Módulo 6)
+      summary: Verificar criptográficamente la integridad de la cadena de hashes SHA-256
+      description: Recorre todos los bloques desde el bloque Génesis (`0000...0000`) recalculando cada `SHA-256` y comprobando que `prevHash` coincida con el `blockHash` anterior.
+      responses:
+        '200':
+          description: Reporte de integridad de la cadena de auditoría.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ChainIntegrityReport'
+
+  /api/auth/login:
+    post:
+      tags:
+        - PKI & Scanner Auth (Módulo 1 ➔ 6)
+      summary: Autenticación segura de operador de escáner (PBKDF2-HMAC-SHA512 + PIN 2FA + JWT ES256)
+      description: |
+        Autentica al personal de acceso verificando en tiempo constante (`crypto.timingSafeEqual`) su contraseña y su PIN 2FA derivados mediante **PBKDF2-HMAC-SHA512 (210,000 iteraciones + Salt único de 128 bits)**, aplica protección anti-fuerza bruta (bloqueo temporal tras 5 intentos fallidos) y emite un token **JWT firmado con ECDSA (`secp256r1` / `ES256`)**.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - username
+                - password
+                - pin
+              properties:
+                username:
+                  type: string
+                  example: operador@ticketmaster.mx
+                password:
+                  type: string
+                  example: Ticketmaster#2026
+                pin:
+                  type: string
+                  example: "2026"
+                gateId:
+                  type: string
+                  example: PUERTA-NORTE-01
+                scannerId:
+                  type: string
+                  example: IPHONE-IOS
+      responses:
+        '200':
+          description: Operador autenticado y token JWT ES256 emitido.
+        '401':
+          description: Credenciales o PIN 2FA inválidos.
+        '429':
+          description: Cuenta bloqueada temporalmente por protección anti-fuerza bruta.
+
+  /api/auth/logout:
+    post:
+      tags:
+        - PKI & Scanner Auth (Módulo 1 ➔ 6)
+      summary: Cerrar sesión y revocar el JTI del token JWT del escáner
+      security:
+        - ScannerBearerAuth: []
+      responses:
+        '200':
+          description: Token revocado criptográficamente.
+
+  /api/pki/public-key:
+    get:
+      tags:
+        - PKI & Scanner Auth (Módulo 1 ➔ 6)
+      summary: Obtener la llave pública ECDSA (secp256r1) de la PKI del evento
+      responses:
+        '200':
+          description: Llave pública en formato PEM (SPKI) y huella digital SHA-256 del certificado.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/PkiPublicKeyResponse'
+
+  /api/pki/scanner-session:
+    post:
+      tags:
+        - PKI & Scanner Auth (Módulo 1 ➔ 6)
+      summary: Emitir credencial JWT firmada con ECDSA (ES256 / secp256r1) para un escáner de puerta
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                gateId:
+                  type: string
+                  example: PUERTA-NORTE-01
+                scannerId:
+                  type: string
+                  example: IPHONE-IOS
+                operator:
+                  type: string
+                  example: Staff Ticketmaster
+      responses:
+        '200':
+          description: Token JWT ES256 emitido para la sesión del lector.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  gateId:
+                    type: string
+                  scannerId:
+                    type: string
+                  operator:
+                    type: string
+                  jwtToken:
+                    type: string
+                  signedWith:
+                    type: string
+                    example: ECDSA secp256r1 (ES256)
+
+  /api/tickets:
+    get:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Listar todos los boletos emitidos y su estado de acceso
+      responses:
+        '200':
+          description: Lista de boletos emitidos.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tickets:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/TicketRecord'
+    post:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Emitir un nuevo boleto firmado con ECDSA (secp256r1)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - buyerName
+              properties:
+                buyerName:
+                  type: string
+                  example: Sofía Ramírez
+                buyerEmail:
+                  type: string
+                  example: sofia.ramirez@stc.mx
+                section:
+                  type: string
+                  enum: [VIP, Preferente, General, Palcos]
+                  default: VIP
+                row:
+                  type: string
+                  example: B
+                seat:
+                  type: string
+                  example: "12"
+      responses:
+        '201':
+          description: Boleto creado y firmado digitalmente.
+
+  /api/tickets/{ticketId}/reset:
+    post:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Restaurar un boleto al estado ISSUED (disponible para volver a escanear)
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: TKT-2026-0001
+      responses:
+        '200':
+          description: Boleto restaurado exitosamente.
+
+  /api/tickets/reset-all:
+    post:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Restaurar todos los boletos al estado ISSUED
+      responses:
+        '200':
+          description: Todos los boletos fueron restaurados.
+
+  /api/simulator/qr/{ticketId}:
+    get:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Generar el paquete QR dinámico (15s) para un boleto en modo válido o de ataque
+      parameters:
+        - name: ticketId
+          in: path
+          required: true
+          schema:
+            type: string
+          example: TKT-2026-0001
+        - name: mode
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [VALID, REPLAY, FAKE_SIGNATURE, FAKE_HMAC]
+            default: VALID
+      responses:
+        '200':
+          description: Paquete QR dinámico con imagen Base64 DataURL, string JSON y metadatos TOTP.
+
+  /api/health:
+    get:
+      tags:
+        - PKI & Scanner Auth (Módulo 1 ➔ 6)
+      summary: Estado del servidor, IP LAN para el celular y configuración de PKI/BD
+      responses:
+        '200':
+          description: Información operativa del nodo validador.
+
+components:
+  securitySchemes:
+    ScannerBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT (ES256 secp256r1)
+
+  schemas:
+    TicketPayload:
+      type: object
+      description: |
+        Payload inmutable del boleto (Módulo 4). Se serializa en JSON canónico con las llaves exactamente en este orden para calcular el hash SHA-256 y verificar la firma ECDSA (`secp256r1`).
+      required:
+        - ticketId
+        - eventId
+        - section
+        - row
+        - seat
+        - buyerHash
+        - issuedAt
+      properties:
+        ticketId:
+          type: string
+          example: TKT-2026-0001
+        eventId:
+          type: string
+          example: EVT-AUD-2026-SYMPHONY
+        section:
+          type: string
+          example: VIP
+        row:
+          type: string
+          example: A
+        seat:
+          type: string
+          example: "01"
+        buyerHash:
+          type: string
+          description: Hash SHA-256 en hexadecimal (64 caracteres) de la identidad del comprador.
+          example: 6dc63dd818621f0d2ba1b5b1ea1d12d9bb9615579bb34b5f1f74f8d022b31d35
+        issuedAt:
+          type: string
+          format: date-time
+          example: "2026-11-03T20:02:57.854Z"
+
+    QrEnvelope:
+      type: object
+      description: |
+        Contrato JSON codificado dentro del Código QR Dinámico (Módulo 5 ➔ Módulo 6).
+      required:
+        - v
+        - p
+        - sig
+        - ts
+        - hmac
+      properties:
+        v:
+          type: integer
+          description: Versión del protocolo de QR dinámico STC.
+          example: 1
+        p:
+          $ref: '#/components/schemas/TicketPayload'
+        sig:
+          type: string
+          description: Firma digital ECDSA (`secp256r1` / SHA-256) codificada en Base64URL sobre el JSON canónico de `p`.
+          example: MEUCIFQi9ipsSB1F-dCOjH_PoPeQ9sWuvPyd7xgEuTZYyQAkAiEA5m8lwDQS2YGBNZMPC3DMHSqOykjsT6-aB5Gxt-BhsAc
+        ts:
+          type: integer
+          format: int64
+          description: Escalón de tiempo TOTP de 15 segundos (`Math.floor(Date.now() / 15000)`).
+          example: 119616943
+        hmac:
+          type: string
+          description: Código de autenticación `HMAC-SHA256(SK_session, "${ticketId}||${ts}")` en hexadecimal (64 caracteres).
+          example: 9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08
+
+    AccessValidationRequest:
+      type: object
+      required:
+        - qrData
+      properties:
+        qrData:
+          oneOf:
+            - type: string
+              description: Cadena JSON cruda leída por la cámara al escanear el código QR.
+            - $ref: '#/components/schemas/QrEnvelope'
+        gateId:
+          type: string
+          default: PUERTA-NORTE-01
+          example: PUERTA-NORTE-01
+        scannerId:
+          type: string
+          default: SCANNER-EXPO-01
+          example: IPHONE-IOS
+
+    AccessValidationResponse:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [VALID, REPLAY, FAKE, ALREADY_USED]
+        title:
+          type: string
+        message:
+          type: string
+        latencyMs:
+          type: number
+          format: float
+          description: Tiempo de ejecución criptográfica en milisegundos (sub-segundo).
+        cryptoChecks:
+          type: object
+          properties:
+            ecdsaVerified:
+              type: boolean
+            hmacVerified:
+              type: boolean
+            totpWindowValid:
+              type: boolean
+            curve:
+              type: string
+              example: secp256r1
+        ticket:
+          type: object
+          nullable: true
+          properties:
+            ticketId:
+              type: string
+            buyerName:
+              type: string
+            section:
+              type: string
+            row:
+              type: string
+            seat:
+              type: string
+            usedAt:
+              type: string
+              nullable: true
+            usedGate:
+              type: string
+              nullable: true
+        auditBlock:
+          $ref: '#/components/schemas/AuditBlock'
+
+    AuditBlock:
+      type: object
+      properties:
+        blockIndex:
+          type: integer
+        timestampIso:
+          type: string
+          format: date-time
+        gateId:
+          type: string
+        scannerId:
+          type: string
+        ticketId:
+          type: string
+        eventId:
+          type: string
+        section:
+          type: string
+        seatLabel:
+          type: string
+        validationResult:
+          type: string
+          enum: [VALID, REPLAY, FAKE, ALREADY_USED]
+        reason:
+          type: string
+        ecdsaValid:
+          type: boolean
+        hmacValid:
+          type: boolean
+        totpStep:
+          type: integer
+          nullable: true
+        latencyMs:
+          type: number
+        prevHash:
+          type: string
+          description: Hash SHA-256 (64 hex chars) del bloque anterior en el libro mayor.
+        blockHash:
+          type: string
+          description: Hash SHA-256 (64 hex chars) del bloque actual.
+
+    ChainIntegrityReport:
+      type: object
+      properties:
+        intact:
+          type: boolean
+        totalBlocks:
+          type: integer
+        genesisHash:
+          type: string
+        latestHash:
+          type: string
+        verifiedAt:
+          type: string
+          format: date-time
+        corruptedAtBlock:
+          type: integer
+          nullable: true
+        reason:
+          type: string
+          nullable: true
+
+    AuditDashboardResponse:
+      type: object
+      properties:
+        occupancy:
+          type: object
+          properties:
+            totalCapacity:
+              type: integer
+            ticketsIssued:
+              type: integer
+            checkedInCount:
+              type: integer
+            remainingIssuedToEnter:
+              type: integer
+            capacityOccupancyPercent:
+              type: number
+            checkInRatePercent:
+              type: number
+            sections:
+              type: array
+              items:
+                type: object
+                properties:
+                  section:
+                    type: string
+                  capacity:
+                    type: integer
+                  issued:
+                    type: integer
+                  inside:
+                    type: integer
+                  occupancyPercent:
+                    type: number
+        securityCounters:
+          type: object
+          properties:
+            totalScans:
+              type: integer
+            validEntries:
+              type: integer
+            replayBlocked:
+              type: integer
+            fakeRejected:
+              type: integer
+            alreadyUsedBlocked:
+              type: integer
+            avgLatencyMs:
+              type: number
+        chainIntegrity:
+          $ref: '#/components/schemas/ChainIntegrityReport'
+        recentLedger:
+          type: array
+          items:
+            $ref: '#/components/schemas/AuditBlock'
+
+    PkiPublicKeyResponse:
+      type: object
+      properties:
+        keyId:
+          type: string
+          example: PKI-CA-EVENT-2026-01
+        curve:
+          type: string
+          example: secp256r1 (prime256v1)
+        publicKeyPem:
+          type: string
+        certificateFingerprint:
+          type: string
+
+    TicketRecord:
+      type: object
+      properties:
+        ticketId:
+          type: string
+        eventId:
+          type: string
+        section:
+          type: string
+        row:
+          type: string
+        seat:
+          type: string
+        buyerName:
+          type: string
+        buyerEmail:
+          type: string
+        buyerHash:
+          type: string
+        ecdsaSignature:
+          type: string
+        status:
+          type: string
+          enum: [ISSUED, USED, REVOKED]
+        usedAt:
+          type: string
+          nullable: true
+        usedGate:
+          type: string
+          nullable: true
+        issuedAt:
+          type: string
+          format: date-time

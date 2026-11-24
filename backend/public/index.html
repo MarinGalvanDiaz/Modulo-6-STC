@@ -1,0 +1,680 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ticketmaster • Control de Acceso y Auditoría (Módulo 6)</title>
+  <script src="/socket.io/socket.io.js"></script>
+  <style>
+    :root {
+      --tm-blue: #026cdf;
+      --tm-blue-dark: #0153ad;
+      --bg: #f4f6f9;
+      --card: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+      --muted: #64748b;
+      --valid: #00a859;
+      --replay: #ea580c;
+      --fake: #e11d48;
+      --used: #026cdf;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+      padding-bottom: 48px;
+    }
+    header {
+      background: var(--tm-blue);
+      color: #ffffff;
+      padding: 16px 32px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+      box-shadow: 0 2px 10px rgba(2, 108, 223, 0.2);
+    }
+    .brand {
+      display: flex;
+      align-items: baseline;
+      gap: 12px;
+    }
+    .brand-logo {
+      font-size: 1.5rem;
+      font-weight: 900;
+      font-style: italic;
+      letter-spacing: -0.03em;
+    }
+    .brand-sub {
+      font-size: 0.85rem;
+      opacity: 0.9;
+      font-weight: 500;
+    }
+    .header-pills {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+    .header-pill {
+      background: rgba(255, 255, 255, 0.16);
+      padding: 6px 14px;
+      border-radius: 999px;
+      font-size: 0.78rem;
+      font-weight: 600;
+    }
+
+    .container {
+      max-width: 1260px;
+      margin: 28px auto;
+      padding: 0 24px;
+      display: grid;
+      grid-template-columns: 390px 1fr;
+      gap: 28px;
+      align-items: start;
+    }
+    @media (max-width: 980px) {
+      .container { grid-template-columns: 1fr; }
+    }
+
+    /* Ticketmaster SafeTix Pass Card */
+    .tm-pass {
+      background: var(--card);
+      border-radius: 20px;
+      overflow: hidden;
+      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
+      border: 1px solid var(--border);
+    }
+    .tm-pass-top {
+      background: var(--tm-blue);
+      color: #fff;
+      padding: 18px 22px 14px;
+    }
+    .tm-pass-eyebrow {
+      font-size: 0.68rem;
+      font-weight: 700;
+      letter-spacing: 0.08em;
+      opacity: 0.85;
+      text-transform: uppercase;
+    }
+    .tm-pass-title {
+      font-size: 1.15rem;
+      font-weight: 800;
+      margin-top: 2px;
+    }
+    .tm-pass-venue {
+      font-size: 0.8rem;
+      opacity: 0.9;
+      margin-top: 2px;
+    }
+    .tm-seat-bar {
+      background: var(--tm-blue-dark);
+      color: #fff;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      padding: 12px 16px;
+      text-align: center;
+    }
+    .tm-seat-bar .lbl {
+      font-size: 0.65rem;
+      font-weight: 700;
+      opacity: 0.75;
+      letter-spacing: 0.06em;
+    }
+    .tm-seat-bar .val {
+      font-size: 1.2rem;
+      font-weight: 900;
+      margin-top: 2px;
+    }
+    .tm-qr-body {
+      padding: 24px;
+      text-align: center;
+    }
+    .tm-qr-body img {
+      width: 240px;
+      height: 240px;
+      display: block;
+      margin: 0 auto;
+    }
+    .safetix-bar {
+      margin: 16px 0 8px;
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 99px;
+      overflow: hidden;
+    }
+    .safetix-fill {
+      height: 100%;
+      background: var(--tm-blue);
+      transition: width 0.35s linear;
+    }
+    .safetix-meta {
+      display: flex;
+      justify-content: space-between;
+      font-size: 0.76rem;
+      color: var(--muted);
+      font-weight: 600;
+    }
+    .safetix-meta strong { color: var(--tm-blue); }
+
+    .controls-box {
+      padding: 0 22px 22px;
+    }
+    label {
+      display: block;
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+      color: var(--muted);
+      margin-bottom: 6px;
+    }
+    select {
+      width: 100%;
+      padding: 10px 12px;
+      border-radius: 10px;
+      border: 1px solid #cbd5e1;
+      background: #f8fafc;
+      color: var(--text);
+      font-size: 0.86rem;
+      font-weight: 600;
+      margin-bottom: 14px;
+    }
+    .mode-pills {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+    .mode-pill {
+      background: #f8fafc;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 8px 4px;
+      font-size: 0.74rem;
+      font-weight: 700;
+      color: #334155;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .mode-pill.active {
+      background: var(--tm-blue);
+      color: #fff;
+      border-color: var(--tm-blue);
+    }
+    .btn-row {
+      display: flex;
+      gap: 8px;
+    }
+    .btn {
+      flex: 1;
+      padding: 11px 14px;
+      border-radius: 10px;
+      font-size: 0.82rem;
+      font-weight: 700;
+      cursor: pointer;
+      border: none;
+    }
+    .btn-primary {
+      background: var(--tm-blue);
+      color: #fff;
+    }
+    .btn-outline {
+      background: #fff;
+      color: #334155;
+      border: 1px solid #cbd5e1;
+    }
+
+    /* Right Dashboard */
+    .card {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+    .status-banner {
+      border-radius: 16px;
+      padding: 18px 22px;
+      margin-bottom: 20px;
+      color: #fff;
+      background: var(--tm-blue);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      transition: background 0.2s;
+    }
+    .status-banner.VALID { background: var(--valid); }
+    .status-banner.REPLAY { background: var(--replay); }
+    .status-banner.FAKE { background: var(--fake); }
+    .status-banner.ALREADY_USED { background: var(--used); }
+
+    .kpi-row {
+      display: grid;
+      grid-template-columns: repeat(5, 1fr);
+      gap: 12px;
+      margin-bottom: 20px;
+    }
+    @media (max-width: 780px) {
+      .kpi-row { grid-template-columns: repeat(2, 1fr); }
+    }
+    .kpi-tile {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px 16px;
+    }
+    .kpi-tile .lbl {
+      font-size: 0.7rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      color: var(--muted);
+    }
+    .kpi-tile .num {
+      font-size: 1.6rem;
+      font-weight: 900;
+      margin-top: 2px;
+    }
+
+    .sec-grid {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .sec-box {
+      background: #f8fafc;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px;
+    }
+    .sec-bar {
+      height: 6px;
+      background: #e2e8f0;
+      border-radius: 99px;
+      margin-top: 8px;
+      overflow: hidden;
+    }
+    .sec-fill {
+      height: 100%;
+      background: var(--tm-blue);
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.82rem;
+      margin-top: 12px;
+    }
+    th, td {
+      text-align: left;
+      padding: 11px 10px;
+      border-bottom: 1px solid #f1f5f9;
+    }
+    th {
+      font-size: 0.7rem;
+      text-transform: uppercase;
+      color: var(--muted);
+      letter-spacing: 0.04em;
+    }
+    .tag {
+      display: inline-block;
+      padding: 3px 9px;
+      border-radius: 99px;
+      font-size: 0.7rem;
+      font-weight: 800;
+      color: #fff;
+    }
+    .tag.VALID { background: var(--valid); }
+    .tag.REPLAY { background: var(--replay); }
+    .tag.FAKE { background: var(--fake); }
+    .tag.ALREADY_USED { background: var(--used); }
+    .mono {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 0.74rem;
+      color: var(--muted);
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <div class="brand">
+      <span class="brand-logo">ticketmaster</span>
+      <span class="brand-sub">SafeTix™ Validator & Libro Mayor de Auditoría (Módulo 6)</span>
+    </div>
+    <div class="header-pills">
+      <div class="header-pill" id="lanIpPill">IP Celular: Cargando...</div>
+      <div class="header-pill" id="chainPill">Hash-Chain: Íntegra</div>
+    </div>
+  </header>
+
+  <div class="container">
+    <!-- IZQUIERDA: BOLETO DIGITAL SAFETIX™ PARA ESCANEAR CON EL IPHONE -->
+    <div class="tm-pass">
+      <div class="tm-pass-top">
+        <div class="tm-pass-eyebrow">BOLETO SAFETIX™ • ECDSA P-256</div>
+        <div class="tm-pass-title">Concierto Sinfónico STC 2026</div>
+        <div class="tm-pass-venue">Gran Auditorio Nacional</div>
+      </div>
+
+      <div class="tm-seat-bar">
+        <div>
+          <div class="lbl">SECCIÓN</div>
+          <div class="val" id="passSec">VIP</div>
+        </div>
+        <div>
+          <div class="lbl">FILA</div>
+          <div class="val" id="passRow">A</div>
+        </div>
+        <div>
+          <div class="lbl">ASIENTO</div>
+          <div class="val" id="passSeat">01</div>
+        </div>
+      </div>
+
+      <div class="tm-qr-body">
+        <img id="qrImage" src="" alt="QR SafeTix" />
+        <div class="safetix-bar">
+          <div class="safetix-fill" id="totpFill" style="width: 100%;"></div>
+        </div>
+        <div class="safetix-meta">
+          <span>Escanea con tu iPhone • Rota cada 15s</span>
+          <strong id="totpCountdownLabel">15s</strong>
+        </div>
+      </div>
+
+      <div class="controls-box">
+        <label for="ticketSelect">Boleto Activo</label>
+        <select id="ticketSelect"></select>
+
+        <label>Escenario de Prueba</label>
+        <div class="mode-pills">
+          <button class="mode-pill active" data-mode="VALID" onclick="setMode('VALID')">Válido</button>
+          <button class="mode-pill" data-mode="REPLAY" onclick="setMode('REPLAY')">Replay</button>
+          <button class="mode-pill" data-mode="FAKE_SIGNATURE" onclick="setMode('FAKE_SIGNATURE')">Firma Falsa</button>
+          <button class="mode-pill" data-mode="FAKE_HMAC" onclick="setMode('FAKE_HMAC')">Sin Llave</button>
+        </div>
+
+        <div class="btn-row" style="margin-bottom: 8px;">
+          <button class="btn btn-primary" onclick="simulateScanFromWeb()">Validar Ahora</button>
+          <button class="btn btn-outline" onclick="resetSelectedTicket()">Restaurar Boleto</button>
+        </div>
+        <div class="btn-row">
+          <button class="btn btn-outline" onclick="resetAllTickets()">Restaurar Todos los Boletos</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- DERECHA: PANEL DE AFORO Y AUDITORÍA EN TIEMPO REAL -->
+    <div>
+      <div class="status-banner" id="lastScanBanner">
+        <div>
+          <div style="font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; opacity: 0.85; font-weight: 700;">
+            Última Lectura en Torniquete
+          </div>
+          <div style="font-size: 1.3rem; font-weight: 900; margin-top: 2px;" id="bannerTitle">
+            Listo para Escanear
+          </div>
+          <div style="font-size: 0.85rem; opacity: 0.92; margin-top: 2px;" id="bannerMsg">
+            Apunta la cámara de tu iPhone al código QR de la izquierda.
+          </div>
+        </div>
+        <div style="text-align: right; min-width: 95px;">
+          <div style="font-size: 1.45rem; font-weight: 900;" id="bannerLatency">-- ms</div>
+          <div style="font-size: 0.72rem; opacity: 0.85;">Sub-segundo</div>
+        </div>
+      </div>
+
+      <div class="kpi-row">
+        <div class="kpi-tile">
+          <div class="lbl">Aforo Dentro</div>
+          <div class="num" id="kpiInside" style="color: var(--tm-blue);">0 / 120</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Válidos</div>
+          <div class="num" id="kpiValid" style="color: var(--valid);">0</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Replay</div>
+          <div class="num" id="kpiReplay" style="color: var(--replay);">0</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Falsos</div>
+          <div class="num" id="kpiFake" style="color: var(--fake);">0</div>
+        </div>
+        <div class="kpi-tile">
+          <div class="lbl">Ya Usados</div>
+          <div class="num" id="kpiUsed" style="color: var(--used);">0</div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <strong style="font-size: 0.95rem;">Ocupación del Auditorio por Sección</strong>
+          <span style="font-size: 0.82rem; color: var(--tm-blue); font-weight: 700;" id="occupancyPctLabel">0%</span>
+        </div>
+        <div class="sec-grid" id="sectionsGrid"></div>
+      </div>
+
+      <div class="card">
+        <div style="display:flex; justify-content:space-between; align-items:center;">
+          <div>
+            <strong style="font-size: 0.95rem;">Libro Mayor de Auditoría (SHA-256 Hash-Chain)</strong>
+            <div style="font-size: 0.78rem; color: var(--muted);">Cada registro está encadenado al hash SHA-256 anterior</div>
+          </div>
+          <button class="btn btn-outline" style="flex:0; padding: 7px 14px;" onclick="verifyChainNow()">
+            Verificar Cadena
+          </button>
+        </div>
+
+        <div style="overflow-x: auto;">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Estado</th>
+                <th>Boleto</th>
+                <th>Puerta</th>
+                <th>Tiempo</th>
+                <th>Hash SHA-256</th>
+              </tr>
+            </thead>
+            <tbody id="ledgerTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    let tickets = [];
+    let selectedTicketId = null;
+    let currentMode = 'VALID';
+    let lastQrEnvelopeString = null;
+    let currentQrStep = null;
+
+    const socket = io();
+
+    socket.on('stats:updated', (dashboard) => {
+      renderDashboard(dashboard);
+      loadTickets(false);
+    });
+
+    socket.on('audit:new_scan', (scanResult) => {
+      renderLastScanBanner(scanResult);
+    });
+
+    async function init() {
+      const healthRes = await fetch('/api/health').then(r => r.json());
+      document.getElementById('lanIpPill').textContent =
+        `IP iPhone: ${healthRes.network.recommendedMobileApiUrl}`;
+
+      await loadTickets(true);
+      const dash = await fetch('/api/audit/dashboard').then(r => r.json());
+      renderDashboard(dash);
+
+      setInterval(tickTotpTimer, 1000);
+    }
+
+    async function loadTickets(selectFirst = false) {
+      const data = await fetch('/api/tickets').then(r => r.json());
+      tickets = data.tickets || [];
+      const select = document.getElementById('ticketSelect');
+      const prevVal = select.value || selectedTicketId;
+      select.innerHTML = '';
+
+      tickets.forEach(t => {
+        const opt = document.createElement('option');
+        opt.value = t.ticketId;
+        const tag = t.status === 'USED' ? '[Usado]' : '[Disponible]';
+        opt.textContent = `${tag} ${t.ticketId} — ${t.section} ${t.row}-${t.seat} (${t.buyerName})`;
+        select.appendChild(opt);
+      });
+
+      if (selectFirst && tickets.length > 0) {
+        selectedTicketId = tickets[0].ticketId;
+        select.value = selectedTicketId;
+        await refreshQr();
+      } else if (prevVal) {
+        selectedTicketId = prevVal;
+        select.value = prevVal;
+        await refreshQr();
+      }
+    }
+
+    document.getElementById('ticketSelect').addEventListener('change', async (e) => {
+      selectedTicketId = e.target.value;
+      await refreshQr();
+    });
+
+    async function setMode(mode) {
+      currentMode = mode;
+      document.querySelectorAll('.mode-pill').forEach(btn => {
+        btn.classList.toggle('active', btn.dataset.mode === mode);
+      });
+      await refreshQr();
+    }
+
+    async function refreshQr() {
+      if (!selectedTicketId) return;
+      const res = await fetch(`/api/simulator/qr/${selectedTicketId}?mode=${currentMode}`).then(r => r.json());
+      if (res.error) return;
+
+      lastQrEnvelopeString = res.qrRawString;
+      currentQrStep = res.totp.currentStep;
+
+      document.getElementById('qrImage').src = res.qrDataUrl;
+      document.getElementById('passSec').textContent = res.ticket.section;
+      document.getElementById('passRow').textContent = res.ticket.row;
+      document.getElementById('passSeat').textContent = res.ticket.seat;
+    }
+
+    async function tickTotpTimer() {
+      const nowMs = Date.now();
+      const windowSec = 15;
+      const step = Math.floor(nowMs / (windowSec * 1000));
+      const secInto = Math.floor((nowMs / 1000) % windowSec);
+      const secLeft = windowSec - secInto;
+      const pct = (secLeft / windowSec) * 100;
+
+      document.getElementById('totpCountdownLabel').textContent = `${secLeft}s`;
+      document.getElementById('totpFill').style.width = `${pct}%`;
+
+      if (currentQrStep !== null && step !== currentQrStep) {
+        await refreshQr();
+      }
+    }
+
+    async function simulateScanFromWeb() {
+      if (!lastQrEnvelopeString) return;
+      const res = await fetch('/api/access/validate', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          qrData: lastQrEnvelopeString,
+          gateId: 'PUERTA-NORTE-01',
+          scannerId: 'WEB-PANEL',
+        }),
+      }).then(r => r.json());
+
+      renderLastScanBanner(res);
+    }
+
+    async function resetSelectedTicket() {
+      if (!selectedTicketId) return;
+      await fetch(`/api/tickets/${selectedTicketId}/reset`, { method: 'POST' });
+      await loadTickets(false);
+    }
+
+    async function resetAllTickets() {
+      await fetch('/api/tickets/reset-all', { method: 'POST' });
+      await loadTickets(false);
+    }
+
+    async function verifyChainNow() {
+      const res = await fetch('/api/audit/verify-chain').then(r => r.json());
+      alert(
+        res.intact
+          ? `Libro Mayor Íntegro\nBloques verificados: ${res.totalBlocks}\nÚltimo Hash SHA-256:\n${res.latestHash}`
+          : `Alerta de alteración:\n${res.reason}`
+      );
+    }
+
+    function renderLastScanBanner(scan) {
+      const banner = document.getElementById('lastScanBanner');
+      banner.className = `status-banner ${scan.status}`;
+      document.getElementById('bannerTitle').textContent = scan.title;
+      document.getElementById('bannerMsg').textContent = scan.message;
+      document.getElementById('bannerLatency').textContent = `${scan.latencyMs} ms`;
+    }
+
+    function renderDashboard(dash) {
+      if (!dash || !dash.occupancy) return;
+      document.getElementById('occupancyPctLabel').textContent =
+        `${dash.occupancy.capacityOccupancyPercent}% Ocupación`;
+      document.getElementById('kpiInside').textContent =
+        `${dash.occupancy.checkedInCount} / ${dash.occupancy.totalCapacity}`;
+      document.getElementById('kpiValid').textContent = dash.securityCounters.validEntries;
+      document.getElementById('kpiReplay').textContent = dash.securityCounters.replayBlocked;
+      document.getElementById('kpiFake').textContent = dash.securityCounters.fakeRejected;
+      document.getElementById('kpiUsed').textContent = dash.securityCounters.alreadyUsedBlocked;
+
+      document.getElementById('chainPill').textContent = dash.chainIntegrity.intact
+        ? `Hash-Chain: Íntegra (${dash.chainIntegrity.totalBlocks})`
+        : 'Hash-Chain: Alterada';
+
+      const secGrid = document.getElementById('sectionsGrid');
+      secGrid.innerHTML = dash.occupancy.sections.map(s => `
+        <div class="sec-box">
+          <div style="display:flex; justify-content:space-between; font-weight:700; font-size:0.84rem;">
+            <span>${s.section}</span>
+            <span style="color:var(--tm-blue);">${s.inside}/${s.capacity}</span>
+          </div>
+          <div class="sec-bar">
+            <div class="sec-fill" style="width:${Math.min(100, s.occupancyPercent)}%;"></div>
+          </div>
+        </div>
+      `).join('');
+
+      const tbody = document.getElementById('ledgerTableBody');
+      tbody.innerHTML = (dash.recentLedger || []).slice(0, 12).map(b => `
+        <tr>
+          <td><strong>#${b.blockIndex}</strong></td>
+          <td><span class="tag ${b.validationResult}">${b.validationResult}</span></td>
+          <td><strong>${b.ticketId}</strong> <span style="color:var(--muted);">(${b.section} ${b.seatLabel})</span></td>
+          <td>${b.gateId}</td>
+          <td><strong>${b.latencyMs} ms</strong></td>
+          <td class="mono">${b.blockHash.slice(0, 20)}...</td>
+        </tr>
+      `).join('');
+    }
+
+    init();
+  </script>
+</body>
+</html>
