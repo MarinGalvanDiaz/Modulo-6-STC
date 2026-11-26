@@ -1,0 +1,429 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Diagrama Criptográfico de Lectura y Validación del QR — Módulo 6</title>
+  <style>
+    :root {
+      --tm-blue: #026cdf;
+      --bg: #f1f5f9;
+      --card: #ffffff;
+      --text: #0f172a;
+      --muted: #64748b;
+      --border: #e2e8f0;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 24px 18px 52px;
+    }
+    .container { max-width: 1360px; margin: 0 auto; }
+    .header-box {
+      background: var(--card);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 20px 24px;
+      margin-bottom: 16px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 16px;
+      box-shadow: 0 4px 16px rgba(15, 23, 42, 0.04);
+    }
+    .eyebrow {
+      display: inline-block;
+      font-size: 0.72rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      letter-spacing: 0.06em;
+      color: var(--tm-blue);
+      background: #eff6ff;
+      padding: 4px 10px;
+      border-radius: 99px;
+      margin-bottom: 4px;
+    }
+    .header-box h1 { font-size: 1.3rem; font-weight: 900; }
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 18px;
+      align-items: center;
+      background: #f8fafc;
+      padding: 10px 16px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      font-size: 0.78rem;
+      font-weight: 700;
+    }
+    .legend-item { display: flex; align-items: center; gap: 8px; }
+    .filter-row {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 16px;
+    }
+    .filter-row span {
+      font-size: 0.76rem;
+      font-weight: 800;
+      text-transform: uppercase;
+      color: var(--muted);
+      margin-right: 4px;
+    }
+    .route-btn {
+      padding: 7px 14px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--card);
+      color: var(--text);
+      font-size: 0.78rem;
+      font-weight: 700;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .route-btn.active {
+      background: var(--tm-blue);
+      color: #fff;
+      border-color: var(--tm-blue);
+      box-shadow: 0 4px 10px rgba(2, 108, 223, 0.22);
+    }
+    .canvas-card {
+      background: #ffffff;
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      padding: 20px;
+      box-shadow: 0 10px 30px rgba(15, 23, 42, 0.06);
+      overflow-x: auto;
+    }
+    .diagram-node {
+      transition: opacity 0.25s ease, filter 0.25s ease;
+    }
+    .dimmed {
+      opacity: 0.16;
+      filter: grayscale(80%);
+    }
+    .mono-text {
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <div class="header-box">
+      <div>
+        <span class="eyebrow">Módulo 6 • Receptor y Validador Criptográfico</span>
+        <h1>Diagrama de Flujo Criptográfico: Lectura y Validación del QR</h1>
+      </div>
+      <div class="legend">
+        <div class="legend-item">
+          <svg width="36" height="22" viewBox="0 0 36 22"><ellipse cx="18" cy="11" rx="16" ry="9" fill="#dbeafe" stroke="#026cdf" stroke-width="2"/></svg>
+          <span>Algoritmo / Ecuación (Óvalo)</span>
+        </div>
+        <div class="legend-item">
+          <svg width="28" height="24" viewBox="0 0 28 24"><polygon points="2,2 26,2 17,14 17,22 11,22 11,14" fill="#ede9fe" stroke="#7c3aed" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>Tolva de Digesto (Hash)</span>
+        </div>
+        <div class="legend-item">
+          <svg width="26" height="24" viewBox="0 0 26 24"><polygon points="13,2 24,12 13,22 2,12" fill="#fef3c7" stroke="#d97706" stroke-width="2" stroke-linejoin="round"/></svg>
+          <span>Decisión</span>
+        </div>
+        <div class="legend-item">
+          <svg width="22" height="24" viewBox="0 0 22 24"><path d="M2,6 C2,3 20,3 20,6 L20,18 C20,21 2,21 2,18 Z" fill="#e0f2fe" stroke="#0284c7" stroke-width="2"/><ellipse cx="11" cy="6" rx="9" ry="3" fill="#bae6fd" stroke="#0284c7" stroke-width="1.5"/></svg>
+          <span>Base de Datos (BD)</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="filter-row">
+      <span>Iluminar Ruta:</span>
+      <button class="route-btn active" onclick="highlightRoute('ALL', this)">Diagrama Completo</button>
+      <button class="route-btn" onclick="highlightRoute('VALID', this)">✅ Boleto Auténtico y Válido</button>
+      <button class="route-btn" onclick="highlightRoute('FAKE_ECDSA', this)">🚨 Firma ECDSA Falsa (x1 ≠ r)</button>
+      <button class="route-btn" onclick="highlightRoute('FAKE_HMAC', this)">🔓 HMAC Inválido (Sin SK_session)</button>
+      <button class="route-btn" onclick="highlightRoute('REPLAY', this)">⏱️ Fuera de Tiempo 15s (Replay)</button>
+      <button class="route-btn" onclick="highlightRoute('USED', this)">🔵 Ya Ingresó (BD)</button>
+    </div>
+
+    <div class="canvas-card">
+      <svg viewBox="0 0 1320 1030" style="width:100%; height:auto; min-width:980px;" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <marker id="arrow-slate" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#334155"/>
+          </marker>
+          <marker id="arrow-blue" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#026cdf"/>
+          </marker>
+          <marker id="arrow-purple" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#7c3aed"/>
+          </marker>
+          <marker id="arrow-green" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#00a859"/>
+          </marker>
+          <marker id="arrow-red" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#e11d48"/>
+          </marker>
+          <marker id="arrow-orange" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse">
+            <path d="M 0 1.5 L 8.5 5 L 0 8.5 z" fill="#ea580c"/>
+          </marker>
+          <linearGradient id="ovalGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#eff6ff"/>
+            <stop offset="100%" stop-color="#dbeafe"/>
+          </linearGradient>
+          <linearGradient id="hopperGrad" x1="0%" y1="0%" x2="0%" y2="100%">
+            <stop offset="0%" stop-color="#f3e8ff"/>
+            <stop offset="100%" stop-color="#ddd6fe"/>
+          </linearGradient>
+          <linearGradient id="diamondGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+            <stop offset="0%" stop-color="#fffbeb"/>
+            <stop offset="100%" stop-color="#fef3c7"/>
+          </linearGradient>
+          <linearGradient id="dbGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+            <stop offset="0%" stop-color="#e0f2fe"/>
+            <stop offset="50%" stop-color="#f0f9ff"/>
+            <stop offset="100%" stop-color="#bae6fd"/>
+          </linearGradient>
+          <filter id="softShadow" x="-10%" y="-10%" width="120%" height="125%">
+            <feDropShadow dx="0" dy="4" stdDeviation="5" flood-color="#0f172a" flood-opacity="0.08"/>
+          </filter>
+        </defs>
+
+        <rect width="1320" height="1030" rx="20" fill="#fcfdff"/>
+
+        <!-- SECCIÓN 1: RECEPTOR -->
+        <g class="diagram-node" data-routes="ALL,VALID,FAKE_ECDSA,FAKE_HMAC,REPLAY,USED">
+          <text x="270" y="34" text-anchor="middle" fill="#026cdf" font-size="16" font-weight="900" letter-spacing="1">RECEPTOR (TORNIQUETE / APP ESCÁNER)</text>
+
+          <rect x="40" y="52" width="190" height="58" rx="10" fill="#ffffff" stroke="#334155" stroke-width="2.2" filter="url(#softShadow)"/>
+          <text x="135" y="77" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="800">Inicia Sesión</text>
+          <text x="135" y="96" text-anchor="middle" fill="#64748b" font-size="11" font-weight="600">Operador + Clave + PIN 2FA</text>
+
+          <line x1="230" y1="81" x2="275" y2="81" stroke="#026cdf" stroke-width="2.2" marker-end="url(#arrow-blue)"/>
+
+          <ellipse cx="415" cy="81" rx="135" ry="38" fill="url(#ovalGrad)" stroke="#026cdf" stroke-width="2.5" filter="url(#softShadow)"/>
+          <text x="415" y="76" text-anchor="middle" fill="#0f172a" font-size="12.5" font-weight="900">PBKDF2-SHA512 + JWT ES256</text>
+          <text x="415" y="94" text-anchor="middle" fill="#1d4ed8" font-size="10.5" font-weight="700" class="mono-text">210k iter • Sesión Única JTI</text>
+
+          <path d="M 415 119 L 415 145 L 270 145 L 270 165" fill="none" stroke="#334155" stroke-width="2.2" marker-end="url(#arrow-slate)"/>
+
+          <rect x="160" y="168" width="220" height="56" rx="10" fill="#ffffff" stroke="#334155" stroke-width="2.2" filter="url(#softShadow)"/>
+          <text x="270" y="193" text-anchor="middle" fill="#0f172a" font-size="14.5" font-weight="900">QR Escanea</text>
+          <text x="270" y="211" text-anchor="middle" fill="#64748b" font-size="11" font-weight="600" class="mono-text">{ v, p, sig, ts, hmac }</text>
+
+          <line x1="270" y1="224" x2="270" y2="255" stroke="#334155" stroke-width="2.2" marker-end="url(#arrow-slate)"/>
+
+          <polygon points="270,258 410,318 270,378 130,318" fill="url(#diamondGrad)" stroke="#d97706" stroke-width="2.5" filter="url(#softShadow)"/>
+          <text x="270" y="313" text-anchor="middle" fill="#78350f" font-size="13" font-weight="800">¿JSON válido y</text>
+          <text x="270" y="331" text-anchor="middle" fill="#78350f" font-size="13" font-weight="800">JWT del escáner?</text>
+
+          <line x1="410" y1="318" x2="475" y2="318" stroke="#e11d48" stroke-width="2.2" marker-end="url(#arrow-red)"/>
+          <text x="442" y="308" text-anchor="middle" fill="#e11d48" font-size="11" font-weight="800">Inválido</text>
+
+          <rect x="480" y="293" width="145" height="50" rx="8" fill="#fff1f2" stroke="#e11d48" stroke-width="2"/>
+          <text x="552" y="315" text-anchor="middle" fill="#881337" font-size="12" font-weight="800">QR mal formado</text>
+          <text x="552" y="332" text-anchor="middle" fill="#e11d48" font-size="11" font-weight="900">END (FAKE)</text>
+        </g>
+
+        <!-- SECCIÓN 2: VERIFICACIÓN DE FIRMA ECDSA CON TOLVA SHA-256 -->
+        <g class="diagram-node" data-routes="ALL,VALID,FAKE_ECDSA,FAKE_HMAC,REPLAY,USED">
+          <text x="295" y="398" fill="#00a859" font-size="12" font-weight="800">Válido</text>
+          <line x1="270" y1="378" x2="270" y2="412" stroke="#334155" stroke-width="2.2"/>
+          <path d="M 270 412 L 115 412 L 115 445" fill="none" stroke="#334155" stroke-width="2.2" marker-end="url(#arrow-slate)"/>
+          <path d="M 270 412 L 345 412 L 345 468" fill="none" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#arrow-purple)"/>
+
+          <rect x="35" y="450" width="160" height="46" rx="8" fill="#ffffff" stroke="#334155" stroke-width="2" filter="url(#softShadow)"/>
+          <text x="115" y="471" text-anchor="middle" fill="#0f172a" font-size="12.5" font-weight="800">Extraer firma (sig)</text>
+          <text x="115" y="487" text-anchor="middle" fill="#64748b" font-size="10.5" font-weight="600">Base64URL</text>
+
+          <line x1="115" y1="496" x2="115" y2="526" stroke="#334155" stroke-width="2" marker-end="url(#arrow-slate)"/>
+
+          <rect x="35" y="530" width="160" height="48" rx="8" fill="#ffffff" stroke="#334155" stroke-width="2" filter="url(#softShadow)"/>
+          <text x="115" y="551" text-anchor="middle" fill="#0f172a" font-size="12.5" font-weight="800">Decodificar</text>
+          <text x="115" y="568" text-anchor="middle" fill="#026cdf" font-size="12" font-weight="800" class="mono-text">par (r, s)</text>
+
+          <text x="345" y="432" text-anchor="middle" fill="#4c1d95" font-size="12" font-weight="800">Datos del boleto p</text>
+          <text x="345" y="447" text-anchor="middle" fill="#64748b" font-size="10.5" font-weight="600" class="mono-text">(ticketId, eventId, section,</text>
+          <text x="345" y="460" text-anchor="middle" fill="#64748b" font-size="10.5" font-weight="600" class="mono-text">row, seat, buyerHash)</text>
+
+          <!-- TOLVA SHA-256 -->
+          <polygon points="255,474 435,474 372,542 372,572 318,572 318,542" fill="url(#hopperGrad)" stroke="#7c3aed" stroke-width="2.6" stroke-linejoin="round" filter="url(#softShadow)"/>
+          <text x="345" y="505" text-anchor="middle" fill="#4c1d95" font-size="14" font-weight="900">TOLVA SHA-256</text>
+          <text x="345" y="523" text-anchor="middle" fill="#6d28d9" font-size="10.5" font-weight="700" class="mono-text">e = H(canonical(p))</text>
+          <text x="345" y="562" text-anchor="middle" fill="#4c1d95" font-size="9.5" font-weight="800" class="mono-text">256 bits</text>
+
+          <!-- CILINDRO BD (Llave Pública) -->
+          <g transform="translate(45, 618)" filter="url(#softShadow)">
+            <path d="M 0,14 C 0,4 110,4 110,14 L 110,66 C 110,76 0,76 0,66 Z" fill="url(#dbGrad)" stroke="#0284c7" stroke-width="2.2"/>
+            <ellipse cx="55" cy="14" rx="55" ry="10" fill="#bae6fd" stroke="#0284c7" stroke-width="2"/>
+            <text x="55" y="42" text-anchor="middle" fill="#0369a1" font-size="13" font-weight="900">BD (PKI)</text>
+            <text x="55" y="58" text-anchor="middle" fill="#0f172a" font-size="11" font-weight="700">Llave Pública</text>
+          </g>
+
+          <path d="M 195 554 Q 250 575 280 615" fill="none" stroke="#026cdf" stroke-width="2.3" marker-end="url(#arrow-blue)"/>
+          <line x1="345" y1="572" x2="345" y2="606" stroke="#7c3aed" stroke-width="2.5" marker-end="url(#arrow-purple)"/>
+          <text x="392" y="594" fill="#6d28d9" font-size="11" font-weight="800" class="mono-text">Digesto e</text>
+          <path d="M 155 655 L 222 655" fill="none" stroke="#0284c7" stroke-width="2.3" marker-end="url(#arrow-blue)"/>
+          <text x="188" y="645" text-anchor="middle" fill="#0369a1" font-size="10.5" font-weight="800" class="mono-text">PK_event</text>
+
+          <!-- ÓVALO: Ecuación Elíptica ECDSA -->
+          <ellipse cx="345" cy="658" rx="118" ry="46" fill="url(#ovalGrad)" stroke="#026cdf" stroke-width="3" filter="url(#softShadow)"/>
+          <text x="345" y="648" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="900">Ecuación Elíptica</text>
+          <text x="345" y="666" text-anchor="middle" fill="#026cdf" font-size="13.5" font-weight="900">ECDSA (secp256r1)</text>
+          <text x="345" y="684" text-anchor="middle" fill="#1e3a8a" font-size="10.5" font-weight="700" class="mono-text">(x1,y1) = u1·G + u2·PK</text>
+
+          <line x1="345" y1="704" x2="345" y2="742" stroke="#026cdf" stroke-width="2.4" marker-end="url(#arrow-blue)"/>
+
+          <!-- ROMBO 2: ¿Coordenada x1 == r (mod n)? -->
+          <polygon points="345,746 495,810 345,874 195,810" fill="url(#diamondGrad)" stroke="#d97706" stroke-width="2.5" filter="url(#softShadow)"/>
+          <text x="345" y="803" text-anchor="middle" fill="#78350f" font-size="13" font-weight="800">¿Coordenada</text>
+          <text x="345" y="822" text-anchor="middle" fill="#78350f" font-size="13" font-weight="900" class="mono-text">x1 == r (mod n)?</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,FAKE_ECDSA">
+          <line x1="195" y1="810" x2="145" y2="810" stroke="#e11d48" stroke-width="2.4" marker-end="url(#arrow-red)"/>
+          <text x="172" y="800" text-anchor="middle" fill="#e11d48" font-size="12" font-weight="900">No</text>
+          <rect x="25" y="782" width="116" height="56" rx="10" fill="#e11d48" filter="url(#softShadow)"/>
+          <text x="83" y="807" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="900">Boleto Falso</text>
+          <text x="83" y="825" text-anchor="middle" fill="#ffe4e6" font-size="10.5" font-weight="700">FAKE (Firma)</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,VALID,FAKE_HMAC,REPLAY,USED">
+          <line x1="345" y1="874" x2="345" y2="915" stroke="#00a859" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+          <text x="364" y="898" fill="#00a859" font-size="12.5" font-weight="900">Sí</text>
+
+          <rect x="250" y="920" width="190" height="48" rx="24" fill="#ecfdf5" stroke="#00a859" stroke-width="2.2" filter="url(#softShadow)"/>
+          <text x="345" y="949" text-anchor="middle" fill="#065f46" font-size="13.5" font-weight="900">✓ Boleto Auténtico</text>
+
+          <path d="M 440 944 C 610 944, 595 95, 765 95" fill="none" stroke="#026cdf" stroke-width="2.5" stroke-dasharray="7,4" marker-end="url(#arrow-blue)"/>
+        </g>
+
+        <!-- SECCIÓN 3: COLUMNA DERECHA (HMAC + TIEMPO 15S) -->
+        <g class="diagram-node" data-routes="ALL,VALID,FAKE_HMAC,REPLAY,USED">
+          <text x="930" y="34" text-anchor="middle" fill="#026cdf" font-size="16" font-weight="900" letter-spacing="1">VALIDACIÓN DINÁMICA (HMAC + VENTANA 15S)</text>
+
+          <rect x="770" y="66" width="230" height="56" rx="10" fill="#ffffff" stroke="#334155" stroke-width="2.2" filter="url(#softShadow)"/>
+          <text x="885" y="91" text-anchor="middle" fill="#0f172a" font-size="14" font-weight="900">Obtener ts y HMAC</text>
+          <text x="885" y="109" text-anchor="middle" fill="#64748b" font-size="11" font-weight="600">Extraídos del QR dinámico</text>
+
+          <g transform="translate(1070, 148)" filter="url(#softShadow)">
+            <path d="M 0,12 C 0,3 115,3 115,12 L 115,62 C 115,71 0,71 0,62 Z" fill="url(#dbGrad)" stroke="#0284c7" stroke-width="2.2"/>
+            <ellipse cx="57.5" cy="12" rx="57.5" ry="9" fill="#bae6fd" stroke="#0284c7" stroke-width="2"/>
+            <text x="57.5" y="39" text-anchor="middle" fill="#0369a1" font-size="12.5" font-weight="900">BD (Boleto)</text>
+            <text x="57.5" y="54" text-anchor="middle" fill="#0f172a" font-size="10.5" font-weight="700" class="mono-text">SK_session</text>
+          </g>
+
+          <line x1="885" y1="122" x2="885" y2="154" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#arrow-purple)"/>
+          <path d="M 1070 182 L 972 182" fill="none" stroke="#0284c7" stroke-width="2.2" marker-end="url(#arrow-purple)"/>
+
+          <!-- TOLVA HMAC-SHA256 -->
+          <polygon points="795,158 975,158 912,222 912,248 858,248 858,222" fill="url(#hopperGrad)" stroke="#7c3aed" stroke-width="2.5" stroke-linejoin="round" filter="url(#softShadow)"/>
+          <text x="885" y="185" text-anchor="middle" fill="#4c1d95" font-size="13" font-weight="900">TOLVA HMAC-SHA256</text>
+          <text x="885" y="203" text-anchor="middle" fill="#6d28d9" font-size="10.5" font-weight="700" class="mono-text">(SK_session, ticketId||ts)</text>
+
+          <line x1="885" y1="248" x2="885" y2="274" stroke="#7c3aed" stroke-width="2.3" marker-end="url(#arrow-blue)"/>
+
+          <ellipse cx="885" cy="318" rx="158" ry="42" fill="url(#ovalGrad)" stroke="#026cdf" stroke-width="2.6" filter="url(#softShadow)"/>
+          <text x="885" y="311" text-anchor="middle" fill="#0f172a" font-size="13" font-weight="900">HMAC_esperado = HMAC-SHA256</text>
+          <text x="885" y="330" text-anchor="middle" fill="#1d4ed8" font-size="11" font-weight="700" class="mono-text">timingSafeEqual(HMAC_esp, HMAC_QR)</text>
+
+          <line x1="885" y1="360" x2="885" y2="388" stroke="#334155" stroke-width="2.2" marker-end="url(#arrow-slate)"/>
+
+          <polygon points="885,392 1035,450 885,508 735,450" fill="url(#diamondGrad)" stroke="#d97706" stroke-width="2.5" filter="url(#softShadow)"/>
+          <text x="885" y="444" text-anchor="middle" fill="#78350f" font-size="12.5" font-weight="800">¿Se creó con la Wallet?</text>
+          <text x="885" y="462" text-anchor="middle" fill="#78350f" font-size="11.5" font-weight="900" class="mono-text">HMAC_esp == HMAC_QR</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,FAKE_HMAC">
+          <line x1="1035" y1="450" x2="1105" y2="450" stroke="#e11d48" stroke-width="2.3" marker-end="url(#arrow-red)"/>
+          <text x="1070" y="440" text-anchor="middle" fill="#e11d48" font-size="12" font-weight="900">No</text>
+          <rect x="1110" y="422" width="175" height="56" rx="10" fill="#e11d48" filter="url(#softShadow)"/>
+          <text x="1197" y="447" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="900">Boleto Falso (FAKE)</text>
+          <text x="1197" y="465" text-anchor="middle" fill="#ffe4e6" font-size="10.5" font-weight="700">Sin llave SK_session</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,VALID,REPLAY,USED">
+          <line x1="885" y1="508" x2="885" y2="544" stroke="#00a859" stroke-width="2.3" marker-end="url(#arrow-blue)"/>
+          <text x="902" y="530" fill="#00a859" font-size="12" font-weight="900">Sí</text>
+
+          <ellipse cx="885" cy="588" rx="152" ry="42" fill="url(#ovalGrad)" stroke="#026cdf" stroke-width="2.6" filter="url(#softShadow)"/>
+          <text x="885" y="582" text-anchor="middle" fill="#0f172a" font-size="13" font-weight="900">Verificar ventana TOTP (15s)</text>
+          <text x="885" y="601" text-anchor="middle" fill="#1d4ed8" font-size="11" font-weight="700" class="mono-text">T_now = floor(now / 15000)</text>
+
+          <line x1="885" y1="630" x2="885" y2="658" stroke="#334155" stroke-width="2.2" marker-end="url(#arrow-slate)"/>
+
+          <polygon points="885,662 1035,718 885,774 735,718" fill="url(#diamondGrad)" stroke="#d97706" stroke-width="2.5" filter="url(#softShadow)"/>
+          <text x="885" y="712" text-anchor="middle" fill="#78350f" font-size="12.5" font-weight="800">¿Entra en tiempo (15s)?</text>
+          <text x="885" y="730" text-anchor="middle" fill="#78350f" font-size="11.5" font-weight="900" class="mono-text">|T_now - ts| &le; 1</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,REPLAY">
+          <line x1="1035" y1="718" x2="1105" y2="718" stroke="#ea580c" stroke-width="2.3" marker-end="url(#arrow-orange)"/>
+          <text x="1070" y="708" text-anchor="middle" fill="#ea580c" font-size="12" font-weight="900">No</text>
+          <rect x="1110" y="690" width="175" height="56" rx="10" fill="#ea580c" filter="url(#softShadow)"/>
+          <text x="1197" y="715" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="900">Ataque Replay</text>
+          <text x="1197" y="733" text-anchor="middle" fill="#ffedd5" font-size="10.5" font-weight="700">QR Expirado (&gt;15s)</text>
+        </g>
+
+        <!-- SECCIÓN 4: ANTI-PASSBACK Y TOLVA DEL LIBRO MAYOR HASH-CHAIN -->
+        <g class="diagram-node" data-routes="ALL,VALID,USED">
+          <line x1="885" y1="774" x2="885" y2="810" stroke="#00a859" stroke-width="2.3" marker-end="url(#arrow-slate)"/>
+          <text x="902" y="796" fill="#00a859" font-size="12" font-weight="900">Sí</text>
+
+          <polygon points="885,814 1025,866 885,918 745,866" fill="url(#diamondGrad)" stroke="#d97706" stroke-width="2.5" filter="url(#softShadow)"/>
+          <text x="885" y="861" text-anchor="middle" fill="#78350f" font-size="12.5" font-weight="800">¿Primer ingreso?</text>
+          <text x="885" y="878" text-anchor="middle" fill="#78350f" font-size="11.5" font-weight="900" class="mono-text">status == ISSUED</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,USED">
+          <line x1="1025" y1="866" x2="1105" y2="866" stroke="#026cdf" stroke-width="2.3" marker-end="url(#arrow-blue)"/>
+          <text x="1065" y="856" text-anchor="middle" fill="#026cdf" font-size="12" font-weight="900">No</text>
+          <rect x="1110" y="838" width="175" height="56" rx="10" fill="#026cdf" filter="url(#softShadow)"/>
+          <text x="1197" y="863" text-anchor="middle" fill="#ffffff" font-size="13" font-weight="900">Ya Ingresó</text>
+          <text x="1197" y="881" text-anchor="middle" fill="#dbeafe" font-size="10.5" font-weight="700">ALREADY_USED</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,VALID">
+          <line x1="885" y1="918" x2="885" y2="952" stroke="#00a859" stroke-width="2.5" marker-end="url(#arrow-green)"/>
+          <text x="902" y="940" fill="#00a859" font-size="12" font-weight="900">Sí</text>
+
+          <rect x="755" y="955" width="260" height="56" rx="28" fill="#00a859" filter="url(#softShadow)"/>
+          <text x="885" y="980" text-anchor="middle" fill="#ffffff" font-size="14" font-weight="900">✓ BOLETO VÁLIDO (VALID)</text>
+          <text x="885" y="998" text-anchor="middle" fill="#d1fae5" font-size="11" font-weight="700">Acceso Autorizado + Hash-Chain BD</text>
+        </g>
+
+        <g class="diagram-node" data-routes="ALL,VALID,FAKE_ECDSA,FAKE_HMAC,REPLAY,USED">
+          <polygon points="555,845 705,845 652,902 652,925 608,925 608,902" fill="url(#hopperGrad)" stroke="#7c3aed" stroke-width="2.4" stroke-linejoin="round" filter="url(#softShadow)"/>
+          <text x="630" y="870" text-anchor="middle" fill="#4c1d95" font-size="12" font-weight="900">TOLVA SHA-256</text>
+          <text x="630" y="886" text-anchor="middle" fill="#6d28d9" font-size="10" font-weight="700" class="mono-text">Bloque || prevHash</text>
+
+          <line x1="630" y1="925" x2="630" y2="946" stroke="#7c3aed" stroke-width="2.2" marker-end="url(#arrow-purple)"/>
+          <g transform="translate(565, 950)" filter="url(#softShadow)">
+            <path d="M 0,10 C 0,2 130,2 130,10 L 130,52 C 130,60 0,60 0,52 Z" fill="url(#dbGrad)" stroke="#0284c7" stroke-width="2"/>
+            <ellipse cx="65" cy="10" rx="65" ry="8" fill="#bae6fd" stroke="#0284c7" stroke-width="1.8"/>
+            <text x="65" y="34" text-anchor="middle" fill="#0369a1" font-size="11.5" font-weight="900">BD Auditoría</text>
+            <text x="65" y="48" text-anchor="middle" fill="#0f172a" font-size="10" font-weight="700" class="mono-text">Hash-Chain</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+  </div>
+
+  <script>
+    function highlightRoute(routeKey, btn) {
+      document.querySelectorAll('.route-btn').forEach(b => b.classList.remove('active'));
+      if (btn) btn.classList.add('active');
+      document.querySelectorAll('.diagram-node').forEach(node => {
+        const routes = (node.getAttribute('data-routes') || '').split(',');
+        if (routeKey === 'ALL' || routes.includes(routeKey)) {
+          node.classList.remove('dimmed');
+        } else {
+          node.classList.add('dimmed');
+        }
+      });
+    }
+  </script>
+</body>
+</html>

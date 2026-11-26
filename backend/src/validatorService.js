@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const db = require('./db');
 const {
   TOTP_WINDOW_SECONDS,
+  TOTP_TOLERANCE_STEPS,
   verifyTicketSignature,
   getTotpStep,
   computeDynamicQrHmac,
@@ -11,9 +12,12 @@ const {
 } = require('./cryptoEngine');
 
 /**
- * Construye el payload del QR Dinámico (Módulo 5 -> Módulo 6)
- * Permite simular tanto QRs legítimos rotando cada 15s como vectores de ataque
- * (REPLAY, FAKE_SIGNATURE, FAKE_HMAC) para demostración en vivo con el celular.
+ * Construye el QR Dinámico conforme al Contrato Oficial Módulo 5 -> Módulo 6:
+ *   textoQR = ticketId + "." + ventana + "." + mac
+ *   donde mac = Base64URL(HMAC-SHA256(SK_session, UTF-8(ticketId + "|" + ventana)))
+ *
+ * Permite además simular los modos de ataque (REPLAY, FAKE_SIGNATURE, FAKE_HMAC)
+ * para demostración en vivo escaneando con el celular.
  */
 async function buildDynamicQrForTicket(ticketId, mode = 'VALID') {
   const ticket = db.getTicketById(ticketId);
@@ -26,46 +30,41 @@ async function buildDynamicQrForTicket(ticketId, mode = 'VALID') {
   const secondsIntoWindow = Math.floor((nowMs / 1000) % TOTP_WINDOW_SECONDS);
   const secondsRemaining = TOTP_WINDOW_SECONDS - secondsIntoWindow;
 
-  const basePayload = JSON.parse(ticket.payloadJson);
-  let qrPayload = { ...basePayload };
-  let signature = ticket.ecdsaSignature;
   let totpStep = currentStep;
-  let hmac = computeDynamicQrHmac(ticket.sessionSecret, ticket.ticketId, totpStep);
-  let modeDescription = 'QR Dinámico legítimo (ECDSA secp256r1 + HMAC-SHA256 activo de 15s)';
+  let mac = computeDynamicQrHmac(ticket.sessionSecret, ticket.ticketId, totpStep);
+  let qrRawString = `${ticket.ticketId}.${totpStep}.${mac}`;
+  let modeDescription =
+    'Contrato Módulo 5 (ticketId.ventana.mac) — ECDSA P-256 (P1363) + HMAC-SHA256 Base64URL (15s)';
 
   if (mode === 'REPLAY') {
     // Ventana de tiempo expirada (hace 2 minutos = 8 ventanas de 15s atrás)
     totpStep = currentStep - 8;
-    hmac = computeDynamicQrHmac(ticket.sessionSecret, ticket.ticketId, totpStep);
+    mac = computeDynamicQrHmac(ticket.sessionSecret, ticket.ticketId, totpStep);
+    qrRawString = `${ticket.ticketId}.${totpStep}.${mac}`;
     modeDescription =
-      'Ataque Replay: Captura de pantalla de un QR cuya ventana TOTP de 15s expiró hace 120 segundos';
-  } else if (mode === 'FAKE_SIGNATURE') {
-    // Boleto adulterado (cambio de sección a VIP-DIAMANTE sin llave privada de la PKI)
-    qrPayload = {
-      ...basePayload,
-      section: 'VIP-ADULTERADO',
-      seat: '99',
-    };
-    modeDescription =
-      'Boleto Falso (Firma ECDSA Inválida): Payload alterado sin llave privada SK_event de la PKI';
+      'Ataque Replay: Captura de pantalla de un QR cuya ventana de 15s expiró hace 120 segundos';
   } else if (mode === 'FAKE_HMAC') {
-    // Firma ECDSA legítima del boleto, pero sin llave secreta de sesión SK_session
-    const fakeSessionSecret = crypto.randomBytes(32).toString('hex');
-    hmac = computeDynamicQrHmac(fakeSessionSecret, ticket.ticketId, currentStep);
+    // Boleto real, ventana actual, pero sin la clave secreta SK_session de la Wallet
+    const fakeSessionSecret = crypto.randomBytes(32).toString('base64url');
+    mac = computeDynamicQrHmac(fakeSessionSecret, ticket.ticketId, currentStep);
+    qrRawString = `${ticket.ticketId}.${currentStep}.${mac}`;
     modeDescription =
-      'Boleto Falso (HMAC Inválido): Intento de generar QR dinámico sin la llave SK_session del dispositivo';
+      'Boleto Falso (HMAC Inválido): QR generado sin poseer la llave secreta SK_session de la Wallet';
+  } else if (mode === 'FAKE_SIGNATURE') {
+    // Simulación de boleto con payload adulterado cuya firma ECDSA P-256 no coincide con PK_event
+    const basePayload = JSON.parse(ticket.payloadJson);
+    const tamperedEnvelope = {
+      v: 1,
+      p: { ...basePayload, seat: 'VIP-99-ADULTERADO' },
+      sig: ticket.ecdsaSignature,
+      ts: currentStep,
+      hmac: mac,
+    };
+    qrRawString = JSON.stringify(tamperedEnvelope);
+    modeDescription =
+      'Boleto Falso (Firma ECDSA P-256 Inválida): Asiento adulterado sin la llave privada SK_event';
   }
 
-  // Paquete compacto codificado dentro del QR
-  const qrEnvelope = {
-    v: 1,
-    p: qrPayload,
-    sig: signature,
-    ts: totpStep,
-    hmac,
-  };
-
-  const qrRawString = JSON.stringify(qrEnvelope);
   const qrDataUrl = await QRCode.toDataURL(qrRawString, {
     errorCorrectionLevel: 'M',
     margin: 2,
@@ -94,28 +93,85 @@ async function buildDynamicQrForTicket(ticketId, mode = 'VALID') {
       currentStep,
       qrStep: totpStep,
       windowSeconds: TOTP_WINDOW_SECONDS,
+      toleranceSteps: TOTP_TOLERANCE_STEPS,
       secondsRemaining,
       expiresAtMs: (currentStep + 1) * TOTP_WINDOW_SECONDS * 1000,
     },
     cryptoDetails: {
-      curve: 'secp256r1 (NIST P-256)',
-      ecdsaSignaturePreview: `${signature.slice(0, 24)}...${signature.slice(-12)}`,
-      hmacSha256: hmac,
+      curve: 'P-256 (secp256r1 / IEEE P1363)',
+      qrFormat: mode === 'FAKE_SIGNATURE' ? 'JSON-Tampered' : 'ticketId.ventana.mac (Módulo 5)',
+      ecdsaSignaturePreview: `${ticket.ecdsaSignature.slice(0, 20)}...${ticket.ecdsaSignature.slice(-10)}`,
+      hmacSha256: mac,
     },
-    qrEnvelope,
     qrRawString,
     qrDataUrl,
   };
 }
 
 /**
- * Motor principal del Módulo 6:
- * Verifica en sub-segundo:
- * 1) Firma digital ECDSA (secp256r1) con llave pública de la PKI
- * 2) Ventana de tiempo TOTP (15s) y recálculo de HMAC-SHA256 (anti-replay)
- * 3) Estado de ingreso único en el auditorio
- * 4) Registro en el Libro Mayor de Auditoría con Hashes Encadenados (SHA-256 Hash Chain)
+ * Parsea la entrada escaneada en la puerta.
+ * Soporta de forma nativa:
+ *  A) Formato Oficial Módulo 5: "ticketId.ventana.mac" (ej. "BOL-001.119674540.MAC_BASE64URL")
+ *  B) Formato JSON extendido QrEnvelope: { v, p, sig, ts, hmac }
  */
+function parseQrInput(qrData) {
+  if (typeof qrData === 'string') {
+    const trimmed = qrData.trim();
+    if (!trimmed.startsWith('{')) {
+      const parts = trimmed.split('.');
+      if (parts.length !== 3) {
+        return { validFormat: false, reason: 'El QR no tiene los 3 segmentos ticketId.ventana.mac' };
+      }
+      const [ticketId, winStr, mac] = parts;
+      const win = Number(winStr);
+      if (!ticketId || !Number.isInteger(win) || !mac) {
+        return { validFormat: false, reason: 'Formato inválido en ticketId, ventana entera o MAC' };
+      }
+      return {
+        validFormat: true,
+        formatType: 'M5_COMPACT',
+        ticketId,
+        scannedTotpStep: win,
+        scannedHmac: mac,
+        inlinePayload: null,
+        inlineSignature: null,
+      };
+    }
+
+    try {
+      const parsed = JSON.parse(trimmed);
+      return parseQrObject(parsed);
+    } catch (e) {
+      return { validFormat: false, reason: 'JSON de QR malformado o corrupto' };
+    }
+  }
+
+  if (qrData && typeof qrData === 'object') {
+    return parseQrObject(qrData);
+  }
+
+  return { validFormat: false, reason: 'Entrada de QR vacía o irreconocible' };
+}
+
+function parseQrObject(parsed) {
+  const payload = parsed?.p || parsed?.payload;
+  const signature = parsed?.sig || parsed?.signature;
+  const scannedTotpStep = Number(parsed?.ts ?? parsed?.totpStep);
+  const scannedHmac = parsed?.hmac || parsed?.mac;
+  if (!payload?.ticketId || !Number.isInteger(scannedTotpStep) || !scannedHmac) {
+    return { validFormat: false, reason: 'Paquete JSON incompleto' };
+  }
+  return {
+    validFormat: true,
+    formatType: 'JSON_ENVELOPE',
+    ticketId: String(payload.ticketId),
+    scannedTotpStep,
+    scannedHmac: String(scannedHmac),
+    inlinePayload: payload,
+    inlineSignature: signature,
+  };
+}
+
 // Cache de idempotencia de 1.5s para evitar dobles lecturas de ráfaga de cámara en iOS/Android
 const recentCameraBurstCache = new Map();
 
@@ -125,17 +181,16 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
   const event = db.getEvent();
 
   const rawKey = typeof qrData === 'string' ? qrData : JSON.stringify(qrData);
-  if (scannerId !== 'TEST-RUNNER') {
-    const cachedBurst = recentCameraBurstCache.get(rawKey);
+  const burstCacheKey = `${gateId}::${scannerId}::${rawKey}`;
+  if (!String(scannerId).includes('TEST-RUNNER')) {
+    const cachedBurst = recentCameraBurstCache.get(burstCacheKey);
     if (cachedBurst && Date.now() - cachedBurst.timestamp < 1500) {
       return cachedBurst.response;
     }
   }
 
-  let parsed;
-  try {
-    parsed = typeof qrData === 'string' ? JSON.parse(qrData) : qrData;
-  } catch (err) {
+  const parsedQr = parseQrInput(qrData);
+  if (!parsedQr.validFormat) {
     const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
     const auditBlock = await db.appendAuditBlock({
       gateId,
@@ -145,7 +200,7 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
       section: 'N/A',
       seatLabel: 'N/A',
       validationResult: 'FAKE',
-      reason: 'Formato de QR irreconocible o corrupto (no es un paquete criptográfico STC válido).',
+      reason: `QR mal formado: ${parsedQr.reason}`,
       ecdsaValid: false,
       hmacValid: false,
       totpStep: null,
@@ -155,88 +210,60 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
     return {
       status: 'FAKE',
       title: 'BOLETO FALSO / QR INVÁLIDO',
-      message: 'El código QR escaneado no contiene una estructura criptográfica STC válida.',
+      message: `Formato de QR rechazado: ${parsedQr.reason}.`,
       latencyMs: Number(latencyMs.toFixed(2)),
       cryptoChecks: {
         ecdsaVerified: false,
         hmacVerified: false,
         totpWindowValid: false,
-        curve: 'secp256r1',
+        curve: 'P-256 (secp256r1)',
       },
       ticket: null,
       auditBlock,
     };
   }
 
-  const payload = parsed?.p || parsed?.payload;
-  const signature = parsed?.sig || parsed?.signature;
-  const scannedTotpStep = Number(parsed?.ts ?? parsed?.totpStep);
-  const scannedHmac = parsed?.hmac;
-
-  const ticketId = payload?.ticketId || 'UNKNOWN-TICKET';
-  const section = payload?.section || 'N/A';
-  const seatLabel = payload?.row && payload?.seat ? `${payload.row}-${payload.seat}` : 'N/A';
-
-  // PASO 1: Verificación instantánea de firma ECDSA (secp256r1) con llave pública de la PKI
-  const isEcdsaValid = verifyTicketSignature(payload, signature, pkiInfo.publicKeyPem);
+  const { ticketId, scannedTotpStep, scannedHmac, inlinePayload, inlineSignature } = parsedQr;
   const storedTicket = db.getTicketById(ticketId);
 
-  if (!isEcdsaValid || !storedTicket) {
+  if (!storedTicket) {
     const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
-    const reason = !isEcdsaValid
-      ? 'Fallo en verificación de firma ECDSA (secp256r1) con PK_event: el payload fue adulterado o firmado por una entidad apócrifa.'
-      : 'El identificador del boleto no existe en el padrón de emisión de la PKI.';
-
+    const reason = `El boleto "${ticketId}" no existe en el padrón oficial de emisión (Módulo 4 / PKI).`;
     const auditBlock = await db.appendAuditBlock({
       gateId,
       scannerId,
       ticketId,
       eventId: event.id,
-      section,
-      seatLabel,
+      section: 'N/A',
+      seatLabel: 'N/A',
       validationResult: 'FAKE',
       reason,
       ecdsaValid: false,
       hmacValid: false,
-      totpStep: isNaN(scannedTotpStep) ? null : scannedTotpStep,
+      totpStep: scannedTotpStep,
       latencyMs,
     });
 
     return {
       status: 'FAKE',
-      title: 'BOLETO FALSO (FIRMA ECDSA INVÁLIDA)',
+      title: 'BOLETO NO REGISTRADO (FALSO)',
       message: reason,
       latencyMs: Number(latencyMs.toFixed(2)),
       cryptoChecks: {
         ecdsaVerified: false,
         hmacVerified: false,
         totpWindowValid: false,
-        curve: 'secp256r1',
+        curve: 'P-256 (secp256r1)',
       },
-      ticket: {
-        ticketId,
-        section,
-        seatLabel,
-      },
+      ticket: { ticketId, section: 'N/A', seatLabel: 'N/A' },
       auditBlock,
     };
   }
 
-  // PASO 2: Recálculo de HMAC-SHA256(SK_session, TicketID || Timestamp_TOTP) y validación de ventana de 15s
-  const currentStep = getTotpStep(Date.now(), TOTP_WINDOW_SECONDS);
-  const isHmacAuthenticForStep = verifyDynamicQrHmac(
-    storedTicket.sessionSecret,
-    storedTicket.ticketId,
-    scannedTotpStep,
-    scannedHmac
-  );
-
-  // Si el HMAC no coincide ni siquiera para el timestamp que dice traer el QR -> Intento de falsificación sin SK_session
-  if (!isHmacAuthenticForStep) {
+  // Verificar si el boleto fue cancelado o revocado
+  if (storedTicket.status === 'REVOKED' || storedTicket.status === 'CANCELADO') {
     const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
-    const reason =
-      'Firma ECDSA válida, pero el código dinámico HMAC-SHA256 es inválido. El emisor no posee la llave secreta de sesión (SK_session).';
-
+    const reason = `Acceso denegado: El boleto ${storedTicket.ticketId} se encuentra CANCELADO/REVOCADO.`;
     const auditBlock = await db.appendAuditBlock({
       gateId,
       scannerId,
@@ -246,22 +273,22 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
       seatLabel: `${storedTicket.row}-${storedTicket.seat}`,
       validationResult: 'FAKE',
       reason,
-      ecdsaValid: true,
+      ecdsaValid: false,
       hmacValid: false,
-      totpStep: isNaN(scannedTotpStep) ? null : scannedTotpStep,
+      totpStep: scannedTotpStep,
       latencyMs,
     });
 
     return {
       status: 'FAKE',
-      title: 'BOLETO FALSO (HMAC DINÁMICO INVÁLIDO)',
+      title: 'BOLETO CANCELADO / REVOCADO',
       message: reason,
       latencyMs: Number(latencyMs.toFixed(2)),
       cryptoChecks: {
-        ecdsaVerified: true,
+        ecdsaVerified: false,
         hmacVerified: false,
         totpWindowValid: false,
-        curve: 'secp256r1',
+        curve: 'P-256 (secp256r1)',
       },
       ticket: {
         ticketId: storedTicket.ticketId,
@@ -274,14 +301,114 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
     };
   }
 
-  // Verificar si la ventana TOTP de 15 segundos ya expiró (tolerancia de 1 escalón = 15s por desfase de red)
+  // PASO 1: Verificación instantánea de firma ECDSA P-256 (IEEE P1363) con la llave pública PK_event
+  const payloadToVerify = inlinePayload || JSON.parse(storedTicket.payloadJson);
+  const signatureToVerify = inlineSignature || storedTicket.ecdsaSignature;
+  const publicKeyToUse = storedTicket.issuerPublicKeyPem || pkiInfo.publicKeyPem;
+
+  const isEcdsaValid = verifyTicketSignature(payloadToVerify, signatureToVerify, publicKeyToUse);
+
+  if (!isEcdsaValid) {
+    const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
+    const reason =
+      'Fallo en verificación de firma ECDSA P-256 (IEEE P1363) con PK_event: los datos del boleto fueron adulterados o la firma es apócrifa.';
+
+    const auditBlock = await db.appendAuditBlock({
+      gateId,
+      scannerId,
+      ticketId: storedTicket.ticketId,
+      eventId: storedTicket.eventId,
+      section: storedTicket.section,
+      seatLabel: `${storedTicket.row}-${storedTicket.seat}`,
+      validationResult: 'FAKE',
+      reason,
+      ecdsaValid: false,
+      hmacValid: false,
+      totpStep: scannedTotpStep,
+      latencyMs,
+    });
+
+    return {
+      status: 'FAKE',
+      title: 'BOLETO FALSO (FIRMA ECDSA INVÁLIDA)',
+      message: reason,
+      latencyMs: Number(latencyMs.toFixed(2)),
+      cryptoChecks: {
+        ecdsaVerified: false,
+        hmacVerified: false,
+        totpWindowValid: false,
+        curve: 'P-256 (secp256r1)',
+      },
+      ticket: {
+        ticketId: storedTicket.ticketId,
+        buyerName: storedTicket.buyerName,
+        section: storedTicket.section,
+        row: storedTicket.row,
+        seat: storedTicket.seat,
+      },
+      auditBlock,
+    };
+  }
+
+  // PASO 2: Recálculo de HMAC-SHA256(SK_session, "ticketId|ventana") en Base64URL y timingSafeEqual
+  const currentStep = getTotpStep(Date.now(), TOTP_WINDOW_SECONDS);
+  const isHmacAuthenticForStep = verifyDynamicQrHmac(
+    storedTicket.sessionSecret,
+    storedTicket.ticketId,
+    scannedTotpStep,
+    scannedHmac
+  );
+
+  if (!isHmacAuthenticForStep) {
+    const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
+    const reason =
+      'Firma ECDSA válida, pero el MAC dinámico Base64URL(HMAC-SHA256(SK_session, ticketId|ventana)) es inválido. El emisor no posee SK_session.';
+
+    const auditBlock = await db.appendAuditBlock({
+      gateId,
+      scannerId,
+      ticketId: storedTicket.ticketId,
+      eventId: storedTicket.eventId,
+      section: storedTicket.section,
+      seatLabel: `${storedTicket.row}-${storedTicket.seat}`,
+      validationResult: 'FAKE',
+      reason,
+      ecdsaValid: true,
+      hmacValid: false,
+      totpStep: scannedTotpStep,
+      latencyMs,
+    });
+
+    return {
+      status: 'FAKE',
+      title: 'BOLETO FALSO (HMAC DINÁMICO INVÁLIDO)',
+      message: reason,
+      latencyMs: Number(latencyMs.toFixed(2)),
+      cryptoChecks: {
+        ecdsaVerified: true,
+        hmacVerified: false,
+        totpWindowValid: false,
+        curve: 'P-256 (secp256r1)',
+      },
+      ticket: {
+        ticketId: storedTicket.ticketId,
+        buyerName: storedTicket.buyerName,
+        section: storedTicket.section,
+        row: storedTicket.row,
+        seat: storedTicket.seat,
+      },
+      auditBlock,
+    };
+  }
+
+  // PASO 3: Verificar ventana de tiempo de 15s con tolerancia +/-1 ventana (acordada con Módulo 5)
   const stepDrift = currentStep - scannedTotpStep;
-  const isWindowActive = stepDrift >= -1 && stepDrift <= 1;
+  const isWindowActive = Math.abs(stepDrift) <= TOTP_TOLERANCE_STEPS;
 
   if (!isWindowActive) {
     const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
     const expiredSeconds = Math.max(15, Math.abs(stepDrift) * TOTP_WINDOW_SECONDS);
-    const reason = `Ataque Replay detectado: El token TOTP (#${scannedTotpStep}) expiró hace ~${expiredSeconds}s (ventana máxima: ${TOTP_WINDOW_SECONDS}s). Captura de pantalla o QR pregrabado rechazado.`;
+    const reason = `Ataque Replay detectado: La ventana TOTP (#${scannedTotpStep}) expiró hace ~${expiredSeconds}s (tolerancia ±${TOTP_TOLERANCE_STEPS} ventana de ${TOTP_WINDOW_SECONDS}s). Captura de pantalla rechazada.`;
 
     const auditBlock = await db.appendAuditBlock({
       gateId,
@@ -307,7 +434,7 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
         ecdsaVerified: true,
         hmacVerified: true,
         totpWindowValid: false,
-        curve: 'secp256r1',
+        curve: 'P-256 (secp256r1)',
         stepDrift,
       },
       ticket: {
@@ -321,10 +448,21 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
     };
   }
 
-  // PASO 3: Verificar si el boleto ya ingresó previamente al recinto
-  if (storedTicket.status === 'USED') {
+  // PASO 4: Transición Atómica ISSUED -> USED (Anti-Passback y protección contra escaneos simultáneos)
+  const previousUsedGate = storedTicket.usedGate;
+  const previousUsedAt = storedTicket.usedAt;
+  const atomicUpdate = await db.markTicketUsedAtomic(
+    storedTicket.ticketId,
+    gateId,
+    scannedTotpStep
+  );
+
+  if (!atomicUpdate.acquired) {
     const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
-    const reason = `Doble ingreso rechazado (Anti-Passback): Este boleto ya registró entrada en ${storedTicket.usedGate} a las ${new Date(storedTicket.usedAt).toLocaleTimeString('es-MX')}.`;
+    const gateInfo = previousUsedGate || atomicUpdate.ticket?.usedGate || gateId;
+    const timeInfo = previousUsedAt || atomicUpdate.ticket?.usedAt;
+    const formattedTime = timeInfo ? new Date(timeInfo).toLocaleTimeString('es-MX') : 'previamente';
+    const reason = `Doble ingreso rechazado (Anti-Passback): Este boleto ya registró entrada en ${gateInfo} a las ${formattedTime}.`;
 
     const auditBlock = await db.appendAuditBlock({
       gateId,
@@ -350,7 +488,7 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
         ecdsaVerified: true,
         hmacVerified: true,
         totpWindowValid: true,
-        curve: 'secp256r1',
+        curve: 'P-256 (secp256r1)',
       },
       ticket: {
         ticketId: storedTicket.ticketId,
@@ -358,17 +496,16 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
         section: storedTicket.section,
         row: storedTicket.row,
         seat: storedTicket.seat,
-        usedAt: storedTicket.usedAt,
-        usedGate: storedTicket.usedGate,
+        usedAt: timeInfo,
+        usedGate: gateInfo,
       },
       auditBlock,
     };
   }
 
-  // PASO 4: Boleto 100% VÁLIDO -> Marcar ingreso atómico y anexar al Libro Mayor de Auditoría
-  const updatedTicket = await db.markTicketUsed(storedTicket.ticketId, gateId, scannedTotpStep);
+  const updatedTicket = atomicUpdate.ticket;
   const latencyMs = Number(process.hrtime.bigint() - startHr) / 1e6;
-  const reason = `Acceso autorizado en ${gateId}. Firma ECDSA (secp256r1) y ventana HMAC-SHA256 (#${scannedTotpStep}) verificadas con éxito.`;
+  const reason = `Acceso autorizado en ${gateId}. Firma ECDSA P-256 (P1363) y QR dinámico M5 (ventana #${scannedTotpStep}) verificados.`;
 
   const auditBlock = await db.appendAuditBlock({
     gateId,
@@ -394,7 +531,7 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
       ecdsaVerified: true,
       hmacVerified: true,
       totpWindowValid: true,
-      curve: 'secp256r1',
+      curve: 'P-256 (secp256r1)',
     },
     ticket: {
       ticketId: updatedTicket.ticketId,
@@ -409,8 +546,8 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
     auditBlock,
   };
 
-  if (scannerId !== 'TEST-RUNNER') {
-    recentCameraBurstCache.set(rawKey, {
+  if (!String(scannerId).includes('TEST-RUNNER')) {
+    recentCameraBurstCache.set(burstCacheKey, {
       timestamp: Date.now(),
       response: validResponse,
     });
@@ -419,9 +556,6 @@ async function validateAccessQr({ qrData, gateId = 'PUERTA-NORTE-01', scannerId 
   return validResponse;
 }
 
-/**
- * Calcula estadísticas de aforo en tiempo real y resumen de seguridad del Libro Mayor
- */
 function getAuditoriumStatsAndAuditSummary() {
   const event = db.getEvent();
   const tickets = db.getAllTickets();
@@ -486,6 +620,7 @@ function clearBurstCache() {
 
 module.exports = {
   buildDynamicQrForTicket,
+  parseQrInput,
   validateAccessQr,
   getAuditoriumStatsAndAuditSummary,
   clearBurstCache,

@@ -45,12 +45,12 @@ paths:
             schema:
               $ref: '#/components/schemas/AccessValidationRequest'
             examples:
-              QrComoStringJson:
-                summary: Payload enviado por el lector de cámara QR
+              FormatoCompactoModulo5:
+                summary: Formato Oficial Módulo 5 (ticketId.ventana.mac)
                 value:
-                  qrData: '{"v":1,"p":{"ticketId":"TKT-2026-0001","eventId":"EVT-AUD-2026-SYMPHONY","section":"VIP","row":"A","seat":"01","buyerHash":"6dc63dd818621f0d2ba1b5b1ea1d12d9bb9615579bb34b5f1f74f8d022b31d35","issuedAt":"2026-11-03T20:02:57.854Z"},"sig":"MEUCIFQi9ipsSB1F-dCOjH_PoPeQ9sWuvPyd7xgEuTZYyQAkAiEA5m8lwDQS2YGBNZMPC3DMHSqOykjsT6-aB5Gxt-BhsAc","ts":119616943,"hmac":"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"}'
+                  qrData: "BOL-001.119674540.9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0"
                   gateId: PUERTA-NORTE-01
-                  scannerId: IPHONE-IOS
+                  scannerId: IPHONE-IOS-A1B2
               QrComoObjeto:
                 summary: Payload enviado como objeto JSON estructurado
                 value:
@@ -238,14 +238,47 @@ paths:
     get:
       tags:
         - PKI & Scanner Auth (Módulo 1 ➔ 6)
-      summary: Obtener la llave pública ECDSA (secp256r1) de la PKI del evento
+      summary: Obtener la llave pública ECDSA P-256 (JWK y PEM) de la PKI del evento
       responses:
         '200':
-          description: Llave pública en formato PEM (SPKI) y huella digital SHA-256 del certificado.
+          description: Llave pública en formatos JWK (para Web Crypto en Módulo 5) y PEM (SPKI), más huella digital SHA-256.
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/PkiPublicKeyResponse'
+
+  /api/wallet/export:
+    get:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Exportar boletos y llave pública JWK en el formato exacto de la Wallet (Módulo 5)
+      responses:
+        '200':
+          description: Estructura `{ tickets: [...], publicKeyJwk: {...} }` lista para consumir en la Wallet del Módulo 5.
+
+  /api/wallet/sync:
+    post:
+      tags:
+        - Ticket & QR Simulator (Módulos 4 y 5 ➔ 6)
+      summary: Sincronizar boletos emitidos externamente (Módulo 4 / Prototipo Módulo 5) hacia el validador Módulo 6
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - tickets
+              properties:
+                tickets:
+                  type: array
+                  items:
+                    type: object
+                publicKeyJwk:
+                  type: object
+      responses:
+        '200':
+          description: Boletos registrados correctamente en el validador.
 
   /api/pki/scanner-session:
     post:
@@ -666,7 +699,20 @@ components:
           example: PKI-CA-EVENT-2026-01
         curve:
           type: string
-          example: secp256r1 (prime256v1)
+          example: P-256 (secp256r1)
+        publicKeyJwk:
+          type: object
+          properties:
+            kty:
+              type: string
+              example: EC
+            crv:
+              type: string
+              example: P-256
+            x:
+              type: string
+            y:
+              type: string
         publicKeyPem:
           type: string
         certificateFingerprint:

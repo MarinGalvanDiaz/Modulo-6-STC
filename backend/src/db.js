@@ -6,8 +6,11 @@ const mysql = require('mysql2/promise');
 const {
   GENESIS_HASH,
   generatePkiKeyPair,
+  exportPublicKeyJwk,
+  importPublicKeyJwkToPem,
   canonicalizeTicketPayload,
   signTicketPayload,
+  verifyTicketSignature,
   computeAuditBlockHash,
   hashBuyerIdentity,
 } = require('./cryptoEngine');
@@ -17,7 +20,7 @@ const STORE_PATH = path.join(DATA_DIR, 'ledger_store.json');
 
 class DatabaseManager {
   constructor() {
-    this.mode = 'initializing'; // 'postgres' | 'mysql' | 'json-mirror'
+    this.mode = 'initializing'; // 'postgres' | 'mysql' | 'sql-ready-mirror'
     this.dbClientPref = (process.env.DB_CLIENT || 'postgres').toLowerCase();
     this.pgPool = null;
     this.mysqlPool = null;
@@ -27,7 +30,7 @@ class DatabaseManager {
       event: null,
       tickets: [],
       auditLedger: [],
-      usedTotpNonces: {}, // { `${ticketId}:${totpStep}`: timestampIso }
+      usedTotpNonces: {},
     };
   }
 
@@ -36,10 +39,8 @@ class DatabaseManager {
       fs.mkdirSync(DATA_DIR, { recursive: true });
     }
 
-    // 1. Load or initialize local state first so PKI keys & seed data exist consistently
     this.loadOrSeedLocalStore();
 
-    // 2. Attempt connection to PostgreSQL or MySQL according to .env
     const dbHost = process.env.DB_HOST || '127.0.0.1';
     const dbUser = process.env.DB_USER || (this.dbClientPref === 'mysql' ? 'root' : 'postgres');
     const dbPassword = process.env.DB_PASSWORD || '';
@@ -76,15 +77,13 @@ class DatabaseManager {
     if (this.mode === 'initializing') {
       this.mode = 'sql-ready-mirror';
       console.log(
-        `[DB] Ejecutando con persistencia transaccional local sincronizada (${STORE_PATH}). ` +
-          `Configura DB_USER/DB_PASSWORD en backend/.env para conectar en vivo al servidor PostgreSQL/MySQL.`
+        `[DB] Ejecutando con persistencia transaccional local sincronizada (${STORE_PATH}).`
       );
     }
   }
 
   async tryConnectPostgres({ dbHost, dbPort, dbUser, dbPassword, dbName }) {
     try {
-      // Connect to default 'postgres' db first to ensure target database exists
       const adminPool = new Pool({
         host: dbHost,
         port: dbPort,
@@ -181,6 +180,7 @@ class DatabaseManager {
             usedTotpNonces: {},
             ...parsed,
           };
+          this.ensureM5CompatibilityMigration();
           return;
         }
       } catch (e) {
@@ -190,6 +190,90 @@ class DatabaseManager {
     this.seedInitialData();
   }
 
+  /**
+   * Asegura que la llave pública tenga su representación JWK y que todos los boletos
+   * cuenten con skSession en Base64URL y firma ECDSA IEEE P1363 compatible con Módulo 5,
+   * además de incluir el boleto de referencia BOL-001 del contrato de Módulo 5.
+   */
+  ensureM5CompatibilityMigration() {
+    let changed = false;
+    const { pkiKey, event, tickets } = this.state;
+
+    if (!pkiKey.publicKeyJwk) {
+      pkiKey.publicKeyJwk = exportPublicKeyJwk(pkiKey.publicKeyPem);
+      changed = true;
+    }
+
+    const eventDateFormatted = '15/11/2026';
+
+    for (const t of tickets) {
+      // Convertir sessionSecret hex antiguo a Base64URL si aplica
+      if (/^[0-9a-f]{64}$/i.test(t.sessionSecret)) {
+        t.sessionSecret = Buffer.from(t.sessionSecret, 'hex').toString('base64url');
+        changed = true;
+      }
+      // Verificar que el payload y la firma usen el contrato canónico IEEE P1363 (64 bytes)
+      let parsedPayload = null;
+      try {
+        parsedPayload = JSON.parse(t.payloadJson);
+      } catch (e) {}
+
+      const sigBuf = Buffer.from(String(t.ecdsaSignature || ''), 'base64url');
+      const validCurrent =
+        parsedPayload &&
+        sigBuf.length === 64 &&
+        verifyTicketSignature(parsedPayload, t.ecdsaSignature, pkiKey.publicKeyPem);
+
+      if (!validCurrent) {
+        const walletPayload = {
+          ticketId: t.ticketId,
+          event: event.name,
+          date: eventDateFormatted,
+          seat: `${t.row}${t.seat}`,
+          titular: t.buyerName,
+        };
+        t.payloadJson = canonicalizeTicketPayload(walletPayload);
+        t.ecdsaSignature = signTicketPayload(walletPayload, pkiKey.privateKeyPem);
+        changed = true;
+      }
+    }
+
+    // Asegurar que exista BOL-001 (el ejemplo exacto del equipo de Módulo 5)
+    if (!tickets.some((t) => t.ticketId === 'BOL-001')) {
+      const issuedAt = new Date().toISOString();
+      const bolPayload = {
+        ticketId: 'BOL-001',
+        event: event.name,
+        date: eventDateFormatted,
+        seat: 'A12',
+        titular: 'Usuario de prueba (Módulo 5)',
+      };
+      tickets.unshift({
+        ticketId: 'BOL-001',
+        eventId: event.id,
+        section: 'VIP',
+        row: 'A',
+        seat: '12',
+        buyerName: 'Usuario de prueba (Módulo 5)',
+        buyerEmail: 'wallet.m5@stc.mx',
+        buyerHash: hashBuyerIdentity('wallet.m5@stc.mx'),
+        sessionSecret: crypto.randomBytes(32).toString('base64url'),
+        payloadJson: canonicalizeTicketPayload(bolPayload),
+        ecdsaSignature: signTicketPayload(bolPayload, pkiKey.privateKeyPem),
+        status: 'ISSUED',
+        usedAt: null,
+        usedGate: null,
+        lastTotpStep: null,
+        issuedAt,
+      });
+      changed = true;
+    }
+
+    if (changed) {
+      this.persistLocalStore();
+    }
+  }
+
   seedInitialData() {
     const pkiKey = generatePkiKeyPair();
     const event = {
@@ -197,6 +281,7 @@ class DatabaseManager {
       name: 'Concierto Magistral Cripto-Sinfónico 2026',
       venue: 'Gran Auditorio Nacional STC',
       eventDate: '2026-11-15T20:30:00-06:00',
+      eventDateShort: '15/11/2026',
       totalCapacity: 120,
       sections: {
         VIP: { capacity: 25, price: 2500 },
@@ -208,31 +293,30 @@ class DatabaseManager {
     };
 
     const sampleBuyers = [
-      { name: 'Ana Sofía Mendoza', email: 'ana.mendoza@stc.mx', section: 'VIP', row: 'A', seat: '01' },
-      { name: 'Carlos Eduardo Ruiz', email: 'carlos.ruiz@stc.mx', section: 'VIP', row: 'A', seat: '02' },
-      { name: 'Mariana Gómez Rivera', email: 'mariana.gomez@stc.mx', section: 'Preferente', row: 'B', seat: '14' },
-      { name: 'Diego Alejandro Torres', email: 'diego.torres@stc.mx', section: 'Preferente', row: 'C', seat: '08' },
-      { name: 'Valeria Hernández Cruz', email: 'valeria.hc@stc.mx', section: 'General', row: 'F', seat: '21' },
-      { name: 'Roberto Sánchez Vega', email: 'roberto.sv@stc.mx', section: 'General', row: 'G', seat: '11' },
-      { name: 'Fernanda Castillo Ortiz', email: 'fernanda.co@stc.mx', section: 'Palcos', row: 'P1', seat: '03' },
-      { name: 'Luis Fernando Morales', email: 'luis.morales@stc.mx', section: 'VIP', row: 'A', seat: '05' },
+      { id: 'BOL-001', name: 'Usuario de prueba (Módulo 5)', email: 'wallet.m5@stc.mx', section: 'VIP', row: 'A', seat: '12' },
+      { id: 'TKT-2026-0001', name: 'Ana Sofía Mendoza', email: 'ana.mendoza@stc.mx', section: 'VIP', row: 'A', seat: '01' },
+      { id: 'TKT-2026-0002', name: 'Carlos Eduardo Ruiz', email: 'carlos.ruiz@stc.mx', section: 'VIP', row: 'A', seat: '02' },
+      { id: 'TKT-2026-0003', name: 'Mariana Gómez Rivera', email: 'mariana.gomez@stc.mx', section: 'Preferente', row: 'B', seat: '14' },
+      { id: 'TKT-2026-0004', name: 'Diego Alejandro Torres', email: 'diego.torres@stc.mx', section: 'Preferente', row: 'C', seat: '08' },
+      { id: 'TKT-2026-0005', name: 'Valeria Hernández Cruz', email: 'valeria.hc@stc.mx', section: 'General', row: 'F', seat: '21' },
+      { id: 'TKT-2026-0006', name: 'Roberto Sánchez Vega', email: 'roberto.sv@stc.mx', section: 'General', row: 'G', seat: '11' },
+      { id: 'TKT-2026-0007', name: 'Fernanda Castillo Ortiz', email: 'fernanda.co@stc.mx', section: 'Palcos', row: 'P1', seat: '03' },
+      { id: 'TKT-2026-0008', name: 'Luis Fernando Morales', email: 'luis.morales@stc.mx', section: 'VIP', row: 'A', seat: '05' },
     ];
 
     const issuedAt = new Date().toISOString();
-    const tickets = sampleBuyers.map((buyer, idx) => {
-      const ticketId = `TKT-2026-${String(idx + 1).padStart(4, '0')}`;
+    const tickets = sampleBuyers.map((buyer) => {
+      const ticketId = buyer.id;
       const buyerHash = hashBuyerIdentity(buyer.email);
-      const sessionSecret = crypto.randomBytes(32).toString('hex'); // 256-bit SK_session
-      const payload = {
+      const sessionSecret = crypto.randomBytes(32).toString('base64url'); // Base64URL SK_session (Módulo 5)
+      const walletPayload = {
         ticketId,
-        eventId: event.id,
-        section: buyer.section,
-        row: buyer.row,
-        seat: buyer.seat,
-        buyerHash,
-        issuedAt,
+        event: event.name,
+        date: '15/11/2026',
+        seat: `${buyer.row}${buyer.seat}`,
+        titular: buyer.name,
       };
-      const ecdsaSignature = signTicketPayload(payload, pkiKey.privateKeyPem);
+      const ecdsaSignature = signTicketPayload(walletPayload, pkiKey.privateKeyPem);
 
       return {
         ticketId,
@@ -244,9 +328,9 @@ class DatabaseManager {
         buyerEmail: buyer.email,
         buyerHash,
         sessionSecret,
-        payloadJson: canonicalizeTicketPayload(payload),
+        payloadJson: canonicalizeTicketPayload(walletPayload),
         ecdsaSignature,
-        status: 'ISSUED', // ISSUED | USED | REVOKED
+        status: 'ISSUED',
         usedAt: null,
         usedGate: null,
         lastTotpStep: null,
@@ -254,37 +338,11 @@ class DatabaseManager {
       };
     });
 
-    // Mark 1 ticket as already entered so the Audit Ledger starts with a Genesis + 1 real block
-    const firstTicket = tickets[7]; // TKT-2026-0008
-    const genesisTimestamp = new Date(Date.now() - 1000 * 180).toISOString();
-    firstTicket.status = 'USED';
-    firstTicket.usedAt = genesisTimestamp;
-    firstTicket.usedGate = 'PUERTA-VIP-01';
-
-    const firstBlock = {
-      blockIndex: 1,
-      timestampIso: genesisTimestamp,
-      gateId: 'PUERTA-VIP-01',
-      scannerId: 'SCANNER-TURNSTILE-01',
-      ticketId: firstTicket.ticketId,
-      eventId: event.id,
-      section: firstTicket.section,
-      seatLabel: `${firstTicket.row}-${firstTicket.seat}`,
-      validationResult: 'VALID',
-      reason: 'Firma ECDSA (secp256r1) verificada y ventana HMAC-SHA256 válida. Acceso concedido.',
-      ecdsaValid: true,
-      hmacValid: true,
-      totpStep: Math.floor(Date.now() / 15000) - 12,
-      latencyMs: 1.42,
-      prevHash: GENESIS_HASH,
-    };
-    firstBlock.blockHash = computeAuditBlockHash(firstBlock);
-
     this.state = {
       pkiKey,
       event,
       tickets,
-      auditLedger: [firstBlock],
+      auditLedger: [],
       usedTotpNonces: {},
     };
 
@@ -323,7 +381,14 @@ class DatabaseManager {
           await this.pgPool.query(
             `INSERT INTO tickets (ticket_id, event_id, section, seat_row, seat_number, buyer_name, buyer_hash, session_secret, payload_json, ecdsa_signature, status, used_at, used_gate, last_totp_step, issued_at)
              VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
-             ON CONFLICT (ticket_id) DO UPDATE SET status = EXCLUDED.status, used_at = EXCLUDED.used_at, used_gate = EXCLUDED.used_gate, last_totp_step = EXCLUDED.last_totp_step`,
+             ON CONFLICT (ticket_id) DO UPDATE SET
+               session_secret = EXCLUDED.session_secret,
+               payload_json = EXCLUDED.payload_json,
+               ecdsa_signature = EXCLUDED.ecdsa_signature,
+               status = EXCLUDED.status,
+               used_at = EXCLUDED.used_at,
+               used_gate = EXCLUDED.used_gate,
+               last_totp_step = EXCLUDED.last_totp_step`,
             [
               t.ticketId,
               t.eventId,
@@ -389,7 +454,14 @@ class DatabaseManager {
           await this.mysqlPool.query(
             `INSERT INTO tickets (ticket_id, event_id, section, seat_row, seat_number, buyer_name, buyer_hash, session_secret, payload_json, ecdsa_signature, status, used_at, used_gate, last_totp_step, issued_at)
              VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
-             ON DUPLICATE KEY UPDATE status = VALUES(status), used_at = VALUES(used_at), used_gate = VALUES(used_gate), last_totp_step = VALUES(last_totp_step)`,
+             ON DUPLICATE KEY UPDATE
+               session_secret = VALUES(session_secret),
+               payload_json = VALUES(payload_json),
+               ecdsa_signature = VALUES(ecdsa_signature),
+               status = VALUES(status),
+               used_at = VALUES(used_at),
+               used_gate = VALUES(used_gate),
+               last_totp_step = VALUES(last_totp_step)`,
             [
               t.ticketId,
               t.eventId,
@@ -441,10 +513,12 @@ class DatabaseManager {
 
   getPkiInfo() {
     const { pkiKey } = this.state;
+    const publicKeyJwk = pkiKey.publicKeyJwk || exportPublicKeyJwk(pkiKey.publicKeyPem);
     return {
       id: pkiKey.id,
       curve: pkiKey.curve,
       publicKeyPem: pkiKey.publicKeyPem,
+      publicKeyJwk,
       certificateFingerprint: pkiKey.certificateFingerprint,
       dbEngine: this.mode,
       dbClientConfigured: this.dbClientPref,
@@ -464,24 +538,111 @@ class DatabaseManager {
     return this.state.tickets.find((t) => t.ticketId === ticketId) || null;
   }
 
+  /**
+   * Exporta el catálogo de boletos y la llave pública en el formato JSON exacto
+   * utilizado por la Wallet del Módulo 5 ({ tickets: [...], publicKeyJwk: {...} }).
+   */
+  exportForModule5Wallet() {
+    const pki = this.getPkiInfo();
+    const event = this.state.event;
+    const walletTickets = this.state.tickets.map((t) => {
+      let parsed = {};
+      try {
+        parsed = JSON.parse(t.payloadJson);
+      } catch (e) {}
+      return {
+        ticketId: t.ticketId,
+        event: parsed.event || event.name,
+        date: parsed.date || '15/11/2026',
+        seat: parsed.seat || `${t.row}${t.seat}`,
+        titular: parsed.titular || t.buyerName,
+        status: t.status === 'ISSUED' ? 'ACTIVO' : t.status,
+        skSession: t.sessionSecret,
+        signatureECDSA: t.ecdsaSignature,
+      };
+    });
+
+    return {
+      tickets: walletTickets,
+      publicKeyJwk: pki.publicKeyJwk,
+    };
+  }
+
+  /**
+   * Permite sincronizar/registrar boletos generados externamente por Módulo 4 o el prototipo de Módulo 5.
+   */
+  async syncExternalWalletBundle({ tickets = [], publicKeyJwk = null }) {
+    const externalPubPem = publicKeyJwk ? importPublicKeyJwkToPem(publicKeyJwk) : null;
+    const synced = [];
+
+    for (const wt of tickets) {
+      if (!wt.ticketId || String(wt.ticketId).includes('.')) {
+        throw new Error(`ticketId inválido (${wt.ticketId}): no puede contener puntos (.)`);
+      }
+      const seatStr = String(wt.seat || 'A01');
+      const rowMatch = seatStr.match(/^([A-Za-z0-9]+?)(\d+)$/);
+      const row = rowMatch ? rowMatch[1] : 'A';
+      const seatNum = rowMatch ? rowMatch[2] : seatStr;
+
+      const walletPayload = {
+        ticketId: wt.ticketId,
+        event: wt.event || this.state.event.name,
+        date: wt.date || '15/11/2026',
+        seat: seatStr,
+        titular: wt.titular || 'Titular Wallet M5',
+      };
+
+      const record = {
+        ticketId: wt.ticketId,
+        eventId: this.state.event.id,
+        section: wt.section || 'VIP',
+        row,
+        seat: seatNum,
+        buyerName: walletPayload.titular,
+        buyerEmail: `${wt.ticketId.toLowerCase()}@wallet.stc.mx`,
+        buyerHash: hashBuyerIdentity(walletPayload.titular),
+        sessionSecret: wt.skSession || crypto.randomBytes(32).toString('base64url'),
+        payloadJson: canonicalizeTicketPayload(walletPayload),
+        ecdsaSignature:
+          wt.signatureECDSA || signTicketPayload(walletPayload, this.state.pkiKey.privateKeyPem),
+        issuerPublicKeyPem: externalPubPem || null,
+        status: wt.status === 'USADO' || wt.status === 'USED' ? 'USED' : 'ISSUED',
+        usedAt: null,
+        usedGate: null,
+        lastTotpStep: null,
+        issuedAt: new Date().toISOString(),
+      };
+
+      const existingIdx = this.state.tickets.findIndex((x) => x.ticketId === wt.ticketId);
+      if (existingIdx >= 0) {
+        this.state.tickets[existingIdx] = record;
+      } else {
+        this.state.tickets.unshift(record);
+      }
+      synced.push(record.ticketId);
+    }
+
+    this.persistLocalStore();
+    await this.syncMemoryToSql();
+    return synced;
+  }
+
   async createTicket({ buyerName, buyerEmail, section = 'VIP', row = 'B', seat = '10' }) {
     const { pkiKey, event, tickets } = this.state;
     const nextNum = tickets.length + 1;
     const ticketId = `TKT-2026-${String(nextNum).padStart(4, '0')}`;
     const issuedAt = new Date().toISOString();
     const buyerHash = hashBuyerIdentity(buyerEmail || buyerName);
-    const sessionSecret = crypto.randomBytes(32).toString('hex');
+    const sessionSecret = crypto.randomBytes(32).toString('base64url');
 
-    const payload = {
+    const walletPayload = {
       ticketId,
-      eventId: event.id,
-      section,
-      row,
-      seat,
-      buyerHash,
-      issuedAt,
+      event: event.name,
+      date: '15/11/2026',
+      seat: `${row}${seat}`,
+      titular: buyerName,
     };
-    const ecdsaSignature = signTicketPayload(payload, pkiKey.privateKeyPem);
+    const ecdsaSignature = signTicketPayload(walletPayload, pkiKey.privateKeyPem);
 
     const newTicket = {
       ticketId,
@@ -493,7 +654,7 @@ class DatabaseManager {
       buyerEmail: buyerEmail || `${buyerName.toLowerCase().replace(/\s+/g, '.')}@stc.mx`,
       buyerHash,
       sessionSecret,
-      payloadJson: canonicalizeTicketPayload(payload),
+      payloadJson: canonicalizeTicketPayload(walletPayload),
       ecdsaSignature,
       status: 'ISSUED',
       usedAt: null,
@@ -508,17 +669,53 @@ class DatabaseManager {
     return newTicket;
   }
 
-  async markTicketUsed(ticketId, gateId, totpStep) {
+  /**
+   * Transición atómica condicional ISSUED -> USED (Anti-Passback y protección contra escaneos simultáneos).
+   */
+  async markTicketUsedAtomic(ticketId, gateId, totpStep) {
     const ticket = this.getTicketById(ticketId);
-    if (!ticket) return null;
+    if (!ticket) return { acquired: false, ticket: null };
+    if (ticket.status !== 'ISSUED') {
+      return { acquired: false, ticket };
+    }
+
+    const usedAtIso = new Date().toISOString();
+
+    if (this.mode === 'postgres' && this.pgPool) {
+      const res = await this.pgPool.query(
+        `UPDATE tickets
+         SET status = 'USED', used_at = $2, used_gate = $3, last_totp_step = $4
+         WHERE ticket_id = $1 AND status = 'ISSUED'
+         RETURNING ticket_id`,
+        [ticketId, usedAtIso, gateId, totpStep]
+      );
+      if (res.rowCount === 0) {
+        return { acquired: false, ticket };
+      }
+    } else if (this.mode === 'mysql' && this.mysqlPool) {
+      const [res] = await this.mysqlPool.query(
+        `UPDATE tickets
+         SET status = 'USED', used_at = ?, used_gate = ?, last_totp_step = ?
+         WHERE ticket_id = ? AND status = 'ISSUED'`,
+        [usedAtIso, gateId, totpStep, ticketId]
+      );
+      if (res.affectedRows === 0) {
+        return { acquired: false, ticket };
+      }
+    }
+
     ticket.status = 'USED';
-    ticket.usedAt = new Date().toISOString();
+    ticket.usedAt = usedAtIso;
     ticket.usedGate = gateId;
     ticket.lastTotpStep = totpStep;
-    this.state.usedTotpNonces[`${ticketId}:${totpStep}`] = ticket.usedAt;
+    this.state.usedTotpNonces[`${ticketId}:${totpStep}`] = usedAtIso;
     this.persistLocalStore();
-    await this.syncMemoryToSql();
-    return ticket;
+    return { acquired: true, ticket };
+  }
+
+  async markTicketUsed(ticketId, gateId, totpStep) {
+    const res = await this.markTicketUsedAtomic(ticketId, gateId, totpStep);
+    return res.ticket;
   }
 
   async resetTicketStatus(ticketId) {
@@ -578,7 +775,7 @@ class DatabaseManager {
       eventId: eventId || this.state.event.id,
       section: section || 'N/A',
       seatLabel: seatLabel || 'N/A',
-      validationResult, // VALID | REPLAY | FAKE | ALREADY_USED
+      validationResult,
       reason,
       ecdsaValid: Boolean(ecdsaValid),
       hmacValid: Boolean(hmacValid),
@@ -604,4 +801,3 @@ class DatabaseManager {
 }
 
 module.exports = new DatabaseManager();
-

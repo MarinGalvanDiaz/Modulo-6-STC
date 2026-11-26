@@ -91,15 +91,40 @@ async function startServer() {
     });
   });
 
-  // 2. PKI Public Key & Scanner Authentication (Módulo 1 -> Módulo 6)
+  // 2. PKI Public Key & Scanner Authentication (Módulo 1 -> Módulo 5 & 6)
   app.get('/api/pki/public-key', (req, res) => {
     const pki = db.getPkiInfo();
     res.json({
       keyId: pki.id,
       curve: pki.curve,
+      publicKeyJwk: pki.publicKeyJwk,
       publicKeyPem: pki.publicKeyPem,
       certificateFingerprint: pki.certificateFingerprint,
     });
+  });
+
+  // Endpoints de integración directa con la Wallet del Módulo 5 ({ tickets, publicKeyJwk })
+  app.get('/api/wallet/export', (req, res) => {
+    res.json(db.exportForModule5Wallet());
+  });
+
+  app.post('/api/wallet/sync', async (req, res) => {
+    try {
+      const { tickets, publicKeyJwk } = req.body || {};
+      if (!Array.isArray(tickets) || tickets.length === 0) {
+        return res.status(400).json({ error: 'Se requiere un arreglo tickets[] no vacío' });
+      }
+      const syncedIds = await db.syncExternalWalletBundle({ tickets, publicKeyJwk });
+      const stats = getAuditoriumStatsAndAuditSummary();
+      io.emit('stats:updated', stats);
+      res.json({
+        ok: true,
+        syncedTickets: syncedIds,
+        message: `${syncedIds.length} boleto(s) sincronizados con el Módulo 6`,
+      });
+    } catch (err) {
+      res.status(400).json({ ok: false, error: err.message });
+    }
   });
 
   // Inicio de sesión seguro para operadores de escáner (PBKDF2-HMAC-SHA512 + PIN 2FA + JWT ES256 secp256r1 + Bloqueo de Sesión Única)
